@@ -16,7 +16,9 @@ namespace BeefsSEGIPlus;
 [AddComponentMenu("Image Effects/Sonic Ether/SEGI")]
 public class SEGIStationeers : MonoBehaviour
 {
-    private const float SunHorizonThreshold = 5.0f; //deg
+    // private const float SunHorizonThreshold = 5.0f; //deg
+    private const float SunHorizonThresholdMin = 2.0f; // deg
+    private const float SunHorizonThresholdMax = 10.0f; // deg
     private const float MaterialCacheClearInterval = 300f; //s
     private const float SpatialCullUpdateInterval = 0.1f; //s
     private const int mipLevels = 6;
@@ -44,6 +46,7 @@ public class SEGIStationeers : MonoBehaviour
     private static readonly HashSet<string> ExcludedObjectNames = new()
     {
         "StructureWeatherStation",
+        "StructureAdvancedFurnace",
         "ItemEvaSuit",
         "BODY_RENDERER",
         "VisorFrost",
@@ -139,7 +142,6 @@ public class SEGIStationeers : MonoBehaviour
     private List<Renderer> _culledEmissiveRenderers = new();
     private List<Renderer> _cachedEmissiveRenderers = new();
     private float _lastSpatialCullUpdate = 0f;
-    private float _lastMaterialCacheClear = 0f;
     private float _lastEmissiveCacheUpdate = 0f;
     private Coroutine _emissiveCacheCoroutine;
 
@@ -845,7 +847,8 @@ public class SEGIStationeers : MonoBehaviour
     private float CalculateAmbientBrightness()
     {
         var sunElevation = GetSunElevationAngle();
-        var t = Mathf.Clamp01((sunElevation + SunHorizonThreshold) / (SunHorizonThreshold * 2f));
+        var thresholdRange = SunHorizonThresholdMax - SunHorizonThresholdMin;
+        var t = Mathf.Clamp01((sunElevation + SunHorizonThresholdMax) / (thresholdRange * 2f));
         // SEGIPlugin.Log.LogInfo($"it says it's now brightness {Mathf.Lerp(ConfigData.NightAmbientBrightness, ConfigData.DayAmbientBrightness, t)}");
         return Mathf.Lerp(ConfigData.NightAmbientBrightness, ConfigData.DayAmbientBrightness, t);
     }
@@ -1148,25 +1151,16 @@ private void CreateVolumeTextures()
 
     private void OnSceneLoaded(UnityEngine.SceneManagement.Scene scene, UnityEngine.SceneManagement.LoadSceneMode mode)
     {
-        // Force re-initialization on scene change
         initalized = false;
-
-        // Clear all caches completely
         _cachedEmissiveRenderers.Clear();
-        CleanupCaches(); // This clears material cache, layer cache, and culled renderers
-
-        // Reset timing variables
+        CleanupCaches();
         _lastEmissiveCacheUpdate = 0f;
-        _lastMaterialCacheClear = 0f;
         _lastSpatialCullUpdate = 0f;
-
-        // Stop any running coroutines
         if (_emissiveCacheCoroutine != null)
         {
             StopCoroutine(_emissiveCacheCoroutine);
             _emissiveCacheCoroutine = null;
         }
-
         SEGIPlugin.Log.LogInfo($"SEGI Plus reset for scene: {scene.name}");
     }
 
@@ -1196,8 +1190,6 @@ private void CreateVolumeTextures()
         string objectName = renderer.gameObject.name;
         string materialNames = string.Join(", ", renderer.materials?.Where(m => m != null).Select(m => m.name) ?? new string[0]);
         string logKey = $"{objectName}|{materialNames}|{reason}";
-
-        // Only log each unique combination once to avoid spam
         if (LoggedExclusions.Add(logKey))
         {
             SEGIPlugin.Log.LogInfo($"EXCLUDED: '{objectName}' materials:[{materialNames}] reason:{reason}");

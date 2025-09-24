@@ -78,13 +78,13 @@ namespace BeefsSEGIPlus
 
         private void BindAllConfigs()
         {
-            Enabled = Config.Bind("General", "Enabled", true, "Enable SEGI Plus global illumination");
+            Enabled = Config.Bind("General", "Enabled", true, "Enable SEGI Plus global illumination. There is an F11 config menu in-game too");
             NearLightGain = Config.Bind("Gain Knobs", "Near Light Gain", 0.0f,
                 new ConfigDescription("Near light gain", new AcceptableValueRange<float>(0f, 2f)));
             GIGain = Config.Bind("Gain Knobs", "Global Illumination Gain", 3.0f,
                 new ConfigDescription("Global illumination gain", new AcceptableValueRange<float>(0f, 8f)));
             SecondaryBounceGain = Config.Bind("Gain Knobs", "Secondary Bounce Gain", 0.0f,
-                new ConfigDescription("Secondary bounce gain", new AcceptableValueRange<float>(0f, 8.0f)));
+                new ConfigDescription("Secondary bounce gain", new AcceptableValueRange<float>(0f, 2.0f)));
             DayAmbientBrightness = Config.Bind("Lighting", "Day Ambient Brightness", 0.05f,
                 new ConfigDescription("Ambient light brightness during day", new AcceptableValueRange<float>(0.001f, 0.25f)));
             NightAmbientBrightness = Config.Bind("Lighting", "Night Ambient Brightness", 0.0f,
@@ -152,7 +152,7 @@ namespace BeefsSEGIPlus
             }
         }
 
-        private bool IsInGameWorld()
+        public bool IsInGameWorld()
         {
             string sceneName = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
             string lowerSceneName = sceneName.ToLower();

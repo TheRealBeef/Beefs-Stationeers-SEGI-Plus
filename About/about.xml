@@ -28,6 +28,14 @@
     </Description>
 
     <ChangeLog>
+        1.1.0:
+        - Added more info to the F11 menu to help with understanding settings
+        - Fixed F11 menu breaking when returning or used in main menu/splash screens
+        - Added F11 menu scaling so it is bigger at 1440/4k
+        - Better day/night transition (now transitions between 2-10 degrees sun elevation instead of +5/-5 deg)
+        - Added Advanced Furnace to object exclusion list in lightweight mode
+        - Thanks **BassManDan** for your feedback helping get this update done quickly
+
         1.0.0:
         - Updated plugin architecture
         - Added lightweight rendering with cached object culling by layer/emissiveness
@@ -38,6 +46,8 @@
         - Improved layer culling for regular rendering
         - Updated config menu system
     </ChangeLog>
+
+    <WorkshopHandle>3573780489</WorkshopHandle>
 
     <Tags>
         <Tag>Graphics</Tag>
