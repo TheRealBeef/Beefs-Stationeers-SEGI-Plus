@@ -190,7 +190,7 @@ namespace BeefsSEGIPlus
         public static float ConeLength => ConeLengths[CurrentQualityLevel];
         public static float ConeWidth => ConeWidths[CurrentQualityLevel];
         public static float ConeTraceBias => 0.65f;
-        public static float TemporalBlendWeight => 0.05f;
+        public static float TemporalBlendWeight => 0.1f;
         public static float GIGain => SEGIPlugin.GIGain?.Value ?? 0.6f;
         public static float NearLightGain => SEGIPlugin.NearLightGain?.Value ?? 1.2f;
         public static float SecondaryBounceGain => SEGIPlugin.SecondaryBounceGain?.Value ?? 0.4f;

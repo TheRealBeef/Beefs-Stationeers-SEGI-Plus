@@ -2,7 +2,7 @@
 <ModMetadata xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
     <Name>Beef's SEGI Plus</Name>
     <Author>TheRealBeef</Author>
-    <Version>1.1.0</Version>
+    <Version>1.1.1</Version>
 
     <Description>
         [h1]Beef's SEGI Plus[/h1]
@@ -30,6 +30,11 @@
     </Description>
 
     <ChangeLog>
+
+        1.1.1:
+        - Improved lightweight mode cleanup
+        - I inverted the new sun calc like a big dumb
+
         1.1.0:
         - Added more info to the F11 menu to help with understanding settings
         - Fixed F11 menu breaking when returning or used in main menu/splash screens
@@ -63,6 +68,8 @@
 <size=30><color=#ffa500>Beef's SEGI Plus</color></size>
 <b>WARNING:</b> <color=#ff0000>This is a StationeersLaunchPad Plugin Mod. It requires BepInEx to be installed.</color>
 See: https://github.com/StationeersLaunchPad/StationeersLaunchPad
+
+There is an in-game config menu with F11.
 
 A modified version of SEGI (Sonic Ether Global Illumination) for Stationeers with shader fixes and performance options.
 

@@ -25,6 +25,7 @@ public class SEGIStationeers : MonoBehaviour
 
     private bool initalized = false;
     private bool notReadyToRender = false;
+    private bool _previousLightweightMode = false;
 
     private int sunShadowResolution = 256;
     private int frameCounter;
@@ -245,6 +246,12 @@ public class SEGIStationeers : MonoBehaviour
         if (volumeTextures[0].width != (int)ConfigData.VoxelResolution) CreateVolumeTextures();
 
         if (dummyVoxelTextureAAScaled.width != DummyVoxelResolution) ResizeDummyTexture();
+
+        if (ConfigData.LightweightMode != _previousLightweightMode)
+        {
+            OnLightweightModeChanged();
+            _previousLightweightMode = ConfigData.LightweightMode;
+        }
     }
 
     private void OnPreRender()
@@ -404,7 +411,6 @@ public class SEGIStationeers : MonoBehaviour
                     if (kvp.Key != null)
                         kvp.Key.layer = kvp.Value;
                 }
-
                 Graphics.ClearRandomWriteTargets();
             }
             else
@@ -821,6 +827,20 @@ public class SEGIStationeers : MonoBehaviour
         giCullingMask &= ~(1 << 28); // (unnamed) - empty
     }
 
+    private void OnLightweightModeChanged()
+    {
+        CleanupCaches();
+        if (_emissiveCacheCoroutine != null)
+        {
+            StopCoroutine(_emissiveCacheCoroutine);
+            _emissiveCacheCoroutine = null;
+        }
+        _cachedEmissiveRenderers.Clear();
+        _culledEmissiveRenderers.Clear();
+        _lastEmissiveCacheUpdate = 0f;
+        _lastSpatialCullUpdate = 0f;
+    }
+
     private Matrix4x4 TransformViewMatrix(Matrix4x4 mat)
     {
         //Since the third column of the view matrix needs to be reversed if using reversed z-buffer, do so here
@@ -848,7 +868,7 @@ public class SEGIStationeers : MonoBehaviour
     {
         var sunElevation = GetSunElevationAngle();
         var thresholdRange = SunHorizonThresholdMax - SunHorizonThresholdMin;
-        var t = Mathf.Clamp01((sunElevation + SunHorizonThresholdMax) / (thresholdRange * 2f));
+        var t = Mathf.Clamp01((sunElevation - (-SunHorizonThresholdMin)) / (thresholdRange * 2f));
         // SEGIPlugin.Log.LogInfo($"it says it's now brightness {Mathf.Lerp(ConfigData.NightAmbientBrightness, ConfigData.DayAmbientBrightness, t)}");
         return Mathf.Lerp(ConfigData.NightAmbientBrightness, ConfigData.DayAmbientBrightness, t);
     }
@@ -1145,6 +1165,11 @@ private void CreateVolumeTextures()
 
     private void CleanupCaches()
     {
+        foreach (var kvp in _layerRestoreCache)
+        {
+            if (kvp.Key != null)
+                kvp.Key.layer = kvp.Value;
+        }
         _layerRestoreCache.Clear();
         _culledEmissiveRenderers.Clear();
     }

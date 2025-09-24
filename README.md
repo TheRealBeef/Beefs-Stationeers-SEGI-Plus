@@ -41,6 +41,10 @@ Built upon the work of:
 
 ## Changelog
 
+>### Version 1.1.1
+> - Improved lightweight mode cleanup
+> - I inverted the new sun calc like a big dumb
+
 >### Version 1.1.0
 >- Added more info to the F11 menu to help with understanding settings
 >- Fixed F11 menu breaking when returning or used in main menu/splash screens
