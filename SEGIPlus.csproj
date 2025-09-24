@@ -1,0 +1,89 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFramework>netstandard2.1</TargetFramework>
+        <AssemblyTitle>BeefsSEGIPlus</AssemblyTitle>
+        <Product>BeefsSEGIPlus</Product>
+        <Version>1.0.0</Version>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <LangVersion>latest</LangVersion>
+        <RootNamespace>BeefsSEGIPlus</RootNamespace>
+        <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
+        <NoWarn>MSB3277</NoWarn>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <GameDir>C:\Program Files (x86)\Steam\steamapps\common\Stationeers</GameDir>
+        <BepInExDir>$(GameDir)\BepInEx</BepInExDir>
+        <WorkshopDir>$(USERPROFILE)\Documents\My Games\Stationeers\mods\BeefsSEGIPlus</WorkshopDir>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Reference Include="Assembly-CSharp">
+            <HintPath>$(GameDir)\rocketstation_Data\Managed\Assembly-CSharp.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="UnityEngine">
+            <HintPath>$(GameDir)\rocketstation_Data\Managed\UnityEngine.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="UnityEngine.CoreModule">
+            <HintPath>$(GameDir)\rocketstation_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="UnityEngine.AssetBundleModule">
+            <HintPath>$(GameDir)\rocketstation_Data\Managed\UnityEngine.AssetBundleModule.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="UnityEngine.ImageConversionModule">
+            <HintPath>$(GameDir)\rocketstation_Data\Managed\UnityEngine.ImageConversionModule.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="UnityEngine.InputLegacyModule">
+            <HintPath>$(GameDir)\rocketstation_Data\Managed\UnityEngine.InputLegacyModule.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="BepInEx">
+            <HintPath>$(BepInExDir)\core\BepInEx.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="BepInEx.Harmony">
+            <HintPath>$(BepInExDir)\core\BepInEx.Harmony.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="0Harmony">
+            <HintPath>$(BepInExDir)\core\0Harmony.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+        <Reference Include="UnityEngine.IMGUIModule">
+            <HintPath>$(GameDir)\rocketstation_Data\Managed\UnityEngine.IMGUIModule.dll</HintPath>
+            <Private>False</Private>
+        </Reference>
+    </ItemGroup>
+
+    <ItemGroup>
+        <Content Include="Content\segi.asset">
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </Content>
+        <None Include="Content\segibeefedit.asset">
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
+    </ItemGroup>
+    
+    <ItemGroup>
+        <None Include="About\**">
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
+    </ItemGroup>
+
+    <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+        <MakeDir Directories="$(WorkshopDir)" />
+        <MakeDir Directories="$(WorkshopDir)\About" />
+        <MakeDir Directories="$(WorkshopDir)\Content" />
+        <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(WorkshopDir)" />
+        <Copy SourceFiles="About\about.xml" DestinationFiles="$(WorkshopDir)\About\about.xml" />
+        <Copy SourceFiles="About\Preview.png" DestinationFiles="$(WorkshopDir)\About\Preview.png" />
+        <Copy SourceFiles="About\thumb.png" DestinationFiles="$(WorkshopDir)\About\thumb.png" />
+        <Copy SourceFiles="$(OutputPath)Content\segi.asset" DestinationFiles="$(WorkshopDir)\Content\segi.asset" />
+        <Copy SourceFiles="$(OutputPath)Content\segibeefedit.asset" DestinationFiles="$(WorkshopDir)\Content\segibeefedit.asset" />
+    </Target>
+</Project>

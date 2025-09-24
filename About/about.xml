@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ModMetadata xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <Name>Beef's SEGI Plus</Name>
+    <Author>TheRealBeef</Author>
+    <Version>1.0.0</Version>
+
+    <Description>
+        [h1]Beef's SEGI Plus[/h1]
+        [b]WARNING:[/b] This is a StationeersLaunchPad Plugin Mod. It requires BepInEx to be installed with the StationeersLaunchPad plugin.
+        See: https://github.com/StationeersLaunchPad/StationeersLaunchPad
+
+        A modified version of SEGI (Sonic Ether Global Illumination) for Stationeers with shader fixes and performance options.
+
+        - 4 quality presets (Low/Medium/High/Extreme)
+        - Lightweight Mode that voxelizes only emissive objects for maximum performance at the cost of more light leakage
+        > This lightweight mode is independent from the quality preset, so can be enabled/disabled to find the best balance for you
+        - Automatic day/night ambient lighting that adjusts based on sun position
+        - Modified SEGI shaders to work properly with Stationeers rendering
+
+        Built upon the work of
+        Sonic Ether (original SEGI): https://github.com/sonicether/SEGI
+        Erdroy (initial Stationeers port): https://github.com/Erdroy/Stationeers.SEGI
+        and Vinus (previous implementation): https://github.com/TerameTechYT/StationeersSharp/tree/development/Source/SEGIMod
+
+        Configuration available through F11 in-game menu, StationeersLaunchPad config, or BepInEx config files.
+
+        Source Code: https://github.com/TheRealBeef/Beefs-Stationeers-SEGI-Plus
+    </Description>
+
+    <ChangeLog>
+        1.0.0:
+        - Updated plugin architecture
+        - Added lightweight rendering with cached object culling by layer/emissiveness
+        - Implemented quality preset sliders
+        - Improved scene management
+        - Day/Night diffuse light adjustments
+        - Updated SEGI Shaders to play more nicely with stationeers
+        - Improved layer culling for regular rendering
+        - Updated config menu system
+    </ChangeLog>
+
+    <Tags>
+        <Tag>Graphics</Tag>
+        <Tag>Lighting</Tag>
+        <Tag>BepInEx</Tag>
+        <Tag>StationeersLaunchPad</Tag>
+    </Tags>
+
+    <InGameDescription>
+        <![CDATA[
+<size=30><color=#ffa500>Beef's SEGI Plus</color></size>
+<b>WARNING:</b> <color=#ff0000>This is a StationeersLaunchPad Plugin Mod. It requires BepInEx to be installed.</color>
+See: https://github.com/StationeersLaunchPad/StationeersLaunchPad
+
+A modified version of SEGI (Sonic Ether Global Illumination) for Stationeers with shader fixes and performance options.
+
+- 4 quality presets (Low/Medium/High/Extreme)
+- Lightweight Mode that renders only emissive objects for maximum performance at the cost of more light leakage
+> This lightweight mode is independent from the quality preset, so can be enabled/disabled to find the best balance for you
+- Automatic day/night ambient lighting that adjusts based on sun position
+- Modified SEGI shaders to work properly with Stationeers rendering
+
+Built upon the work of
+Sonic Ether (original SEGI): https://github.com/sonicether/SEGI
+Erdroy (initial Stationeers port): https://github.com/Erdroy/Stationeers.SEGI
+and Vinus (previous implementation): https://github.com/TerameTechYT/StationeersSharp/tree/development/Source/SEGIMod
+
+Configuration available through F11 in-game menu, StationeersLaunchPad config, or BepInEx config files.
+
+Source Code: https://github.com/TheRealBeef/Beefs-Stationeers-SEGI-Plus
+]]>
+    </InGameDescription>
+</ModMetadata>
+
