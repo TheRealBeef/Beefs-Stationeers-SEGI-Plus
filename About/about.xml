@@ -9,6 +9,8 @@
         [b]WARNING:[/b] This is a StationeersLaunchPad Plugin Mod. It requires BepInEx to be installed with the StationeersLaunchPad plugin.
         See: https://github.com/StationeersLaunchPad/StationeersLaunchPad
 
+        There is an in-game config menu with F11.
+
         A modified version of SEGI (Sonic Ether Global Illumination) for Stationeers with shader fixes and performance options.
 
         - 4 quality presets (Low/Medium/High/Extreme)

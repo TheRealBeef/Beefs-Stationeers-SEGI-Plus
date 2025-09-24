@@ -78,7 +78,7 @@ namespace BeefsSEGIPlus
 
         private void BindAllConfigs()
         {
-            Enabled = Config.Bind("General", "Enabled", true, "Enable SEGI Plus global illumination. There is an F11 config menu in-game too");
+            Enabled = Config.Bind("General", "Enable (There is also F11 config menu in-game)", true, "Enable SEGI Plus global illumination. There is an F11 config menu in-game too");
             NearLightGain = Config.Bind("Gain Knobs", "Near Light Gain", 0.0f,
                 new ConfigDescription("Near light gain", new AcceptableValueRange<float>(0f, 2f)));
             GIGain = Config.Bind("Gain Knobs", "Global Illumination Gain", 3.0f,

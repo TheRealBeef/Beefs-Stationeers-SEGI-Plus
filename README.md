@@ -4,6 +4,8 @@
 <img alt="SEGI Plus Logo" src="./About/thumb.png" width="45%" />
 </p>
 
+There is an in-game config menu with F11.
+
 A modified version of SEGI (Sonic Ether Global Illumination) for Stationeers with shader fixes and performance options.
 
 ## Features
