@@ -162,6 +162,24 @@ public class ConfigMenu : MonoBehaviour
             if (newLightweight != currentLightweight) SEGIPlugin.LightweightMode.Value = newLightweight;
             GUILayout.TextArea("Only renders emissive objects during voxelization.\nRuns much faster but causes light leakage.\nYou Probably will want to lower the main GI Gain with this enabled", GUI.skin.box);
 
+
+            GUILayout.Space(10);
+            GUILayout.Label("=== Adaptive Performance ===", GUI.skin.box, GUILayout.ExpandWidth(true));
+
+            var currentAdaptive = SEGIPlugin.AdaptivePerformance.Value;
+            var newAdaptive = GUILayout.Toggle(currentAdaptive, $"Enable Adaptive Performance ({currentAdaptive})");
+            if (newAdaptive != currentAdaptive) SEGIPlugin.AdaptivePerformance.Value = newAdaptive;
+            GUILayout.TextArea("Automatically adjusts settings to maintain framerate", GUI.skin.box);
+
+            if (SEGIPlugin.AdaptivePerformance.Value)
+            {
+                GUILayout.Space(5);
+                GUILayout.Label($"Target Framerate: {SEGIPlugin.TargetFramerate.Value} FPS");
+                var newTargetFPS = Mathf.RoundToInt(GUILayout.HorizontalSlider(SEGIPlugin.TargetFramerate.Value, 30, 240));
+                if (newTargetFPS != SEGIPlugin.TargetFramerate.Value) SEGIPlugin.TargetFramerate.Value = newTargetFPS;
+                GUILayout.TextArea("The system will try to adjust SEGI Plus to stay around this framerate", GUI.skin.box);
+            }
+
             GUILayout.Space(10);
             GUILayout.Label("=== Gain Controls ===", GUI.skin.box, GUILayout.ExpandWidth(true));
 

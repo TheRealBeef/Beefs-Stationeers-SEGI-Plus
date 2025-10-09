@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections;
+using System.Collections.Generic;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
@@ -13,6 +14,30 @@ namespace BeefsSEGIPlus
         public static SEGIPlugin Instance;
         public static ManualLogSource Log;
 
+        private float popupDelay = 1.5f;
+        public static ConfigEntry<bool> Update1_2_0_Popup;
+
+        private class UpdatePopupItem
+        {
+            public string Key;
+            public string Title;
+            public string Changelog;
+            public ConfigEntry<bool> Config;
+        }
+
+        private readonly List<UpdatePopupItem> allPopups = new List<UpdatePopupItem>();
+        private Queue<UpdatePopupItem> popupQueue;
+        private UpdatePopupItem currentPopup;
+
+        private Rect popupRect;
+        private Vector2 scrollPos;
+        private bool showPopup = false;
+        private bool pendingShow = false;
+        private float guiScale = 1.0f;
+        private int lastScreenHeight = 0;
+        private int lastScreenWidth = 0;
+        private bool popupRectInitialized = false;
+
         public static ConfigEntry<bool> Enabled;
         public static ConfigEntry<int> QualityLevel;
         public static ConfigEntry<float> SecondaryBounceGain;
@@ -21,6 +46,8 @@ namespace BeefsSEGIPlus
         public static ConfigEntry<float> DayAmbientBrightness;
         public static ConfigEntry<float> NightAmbientBrightness;
         public static ConfigEntry<bool> LightweightMode;
+        public static ConfigEntry<int> TargetFramerate;
+        public static ConfigEntry<bool> AdaptivePerformance;
 
         private static SEGIStationeers SegiStationeersInstance { get; set; }
 
@@ -30,7 +57,31 @@ namespace BeefsSEGIPlus
             Log = Logger;
             BindAllConfigs();
             Log.LogInfo($"Plugin {PluginInfo.PLUGIN_NAME} is loaded!");
+
+            Update1_2_0_Popup = AddUpdatePopup(
+                "Update1_2_0_Popup",
+                "SEGI Plus was Updated to v1.2.0!",
+                "Changelog v1.2.0:\n " +
+                "- Added first pass of adaptive framerate control that works with the quality setting to try and improve performance\n" +
+                "- This can be used at any quality setting and with or without lightweight mode\n\n" +
+                "## IMPORTANT ##\n" +
+                "- This is automatically enabled with a target framerate of 60 - you can disable this or change the target in settings\n\n" +
+                "Press F11 in-game to access the configuration menu or use the workshop button on the left and click on the mod to adjust settings!",
+                defaultSeen: false);
+
+            popupQueue = new Queue<UpdatePopupItem>();
+            foreach (var p in allPopups)
+            {
+                if (!p.Config.Value)
+                {
+                    popupQueue.Enqueue(p);
+                }
+            }
+
+            pendingShow = popupQueue.Count > 0;
         }
+
+
 
         private void Start()
         {
@@ -69,6 +120,30 @@ namespace BeefsSEGIPlus
                     Log.LogError($"Failed to initialize SEGI Plus: {ex.Message}");
                 }
             }
+
+            if (pendingShow && currentPopup == null && popupQueue != null && popupQueue.Count > 0 &&
+                IsInGameWorld())
+            {
+                if (popupDelay > 0f)
+                {
+                    popupDelay -= Time.deltaTime;
+                    return;
+                }
+                currentPopup = popupQueue.Dequeue();
+                StartShowingPopup(currentPopup);
+            }
+
+            if (showPopup && !IsInGameWorld())
+            {
+                showPopup = false;
+            }
+
+            if (popupRectInitialized && (Screen.height != lastScreenHeight || Screen.width != lastScreenWidth))
+            {
+                popupRectInitialized = false;
+                lastScreenHeight = Screen.height;
+                lastScreenWidth = Screen.width;
+            }
         }
 
         private void OnDestroy()
@@ -94,6 +169,11 @@ namespace BeefsSEGIPlus
                     new AcceptableValueRange<int>(0, 3)));
             LightweightMode = Config.Bind("Performance", "**Lightweight Mode**", false,
                 "If you enable this it cull most objects except the emissive ones during voxelization and runs *way* faster, at the cost of light leakage. Can be combined with any quality setting.");
+            AdaptivePerformance = Config.Bind("Performance", "Adaptive Performance", true,
+                "Automatically adjusts settings to maintain framerate");
+            TargetFramerate = Config.Bind("Performance", "Target Framerate", 60,
+                new ConfigDescription("he system will try to adjust SEGI Plus to stay around this framerate",
+                    new AcceptableValueRange<int>(30, 144)));
         }
 
         private IEnumerator InitializeSEGICoroutine()
@@ -160,12 +240,129 @@ namespace BeefsSEGIPlus
             bool isGameWorld = !isMenu;
             return isGameWorld;
         }
+
+        private ConfigEntry<bool> AddUpdatePopup(string key, string title, string changelog, bool defaultSeen = false)
+        {
+            var cfg = Config.Bind("X - NO TOUCH - Internal", key, defaultSeen, new ConfigDescription(""));
+            var item = new UpdatePopupItem
+            {
+                Key = key,
+                Title = title,
+                Changelog = changelog,
+                Config = cfg
+            };
+            allPopups.Add(item);
+            return cfg;
+        }
+
+        private void StartShowingPopup(UpdatePopupItem item)
+        {
+            popupRectInitialized = false;
+            scrollPos = Vector2.zero;
+            showPopup = true;
+        }
+
+        private void InitializePopupRect()
+        {
+            if (popupRectInitialized) return;
+
+            float screenHeight = Screen.height;
+            float screenWidth = Screen.width;
+            float baseHeight = 1080f;
+
+            guiScale = Mathf.Max(1.0f, screenHeight / baseHeight);
+
+            float baseWidth = 520f;
+            float basePopupHeight = 320f;
+
+            float scaledWidth = baseWidth * guiScale;
+            float scaledHeight = basePopupHeight * guiScale;
+
+            popupRect = new Rect((screenWidth - scaledWidth) / 2f, (screenHeight - scaledHeight) / 2f, scaledWidth, scaledHeight);
+            lastScreenHeight = (int)screenHeight;
+            lastScreenWidth = (int)screenWidth;
+            popupRectInitialized = true;
+        }
+        private void OnGUI()
+        {
+            Color oldColor = GUI.color;
+            if (!showPopup || currentPopup == null) return;
+            if (!IsInGameWorld()) return;
+
+            if (!popupRectInitialized)
+                InitializePopupRect();
+
+            Matrix4x4 oldMatrix = GUI.matrix;
+            GUI.matrix = Matrix4x4.Scale(new Vector3(guiScale, guiScale, 1.0f));
+
+            Rect scaledRect = new Rect(
+                popupRect.x / guiScale,
+                popupRect.y / guiScale,
+                popupRect.width / guiScale,
+                popupRect.height / guiScale
+            );
+
+            GUI.color = Color.white;
+            GUI.backgroundColor = Color.red;
+            scaledRect = GUI.ModalWindow(987987987, scaledRect, DrawPopupWindow, currentPopup.Title);
+
+            popupRect = new Rect(
+                scaledRect.x * guiScale,
+                scaledRect.y * guiScale,
+                scaledRect.width * guiScale,
+                scaledRect.height * guiScale
+            );
+
+            GUI.matrix = oldMatrix;
+            GUI.color = oldColor;
+        }
+
+        private void DrawPopupWindow(int id)
+        {
+            GUILayout.BeginVertical();
+            var wrapStyle = new GUIStyle(GUI.skin.label) { wordWrap = true };
+
+            float scaledHeight = (popupRect.height / guiScale) - 80;
+            scrollPos = GUILayout.BeginScrollView(scrollPos, GUILayout.Height(scaledHeight));
+            GUILayout.Label(currentPopup.Changelog, wrapStyle, GUILayout.ExpandWidth(true));
+            GUILayout.EndScrollView();
+
+            GUILayout.Space(8);
+
+            GUILayout.BeginHorizontal();
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button("OK - Don't show this update again", GUILayout.Height(30), GUILayout.Width(250)))
+            {
+                currentPopup.Config.Value = true;
+                Config.Save();
+                if (popupQueue.Count > 0)
+                {
+                    currentPopup = popupQueue.Dequeue();
+                    scrollPos = Vector2.zero;
+                    popupRectInitialized = false;
+                    showPopup = true;
+                }
+                else
+                {
+                    currentPopup = null;
+                    showPopup = false;
+                    pendingShow = false;
+                }
+            }
+
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+
+            GUILayout.EndVertical();
+            GUI.DragWindow();
+        }
+
     }
     internal static class ConfigData
     {
         private static int CurrentQualityLevel => SEGIPlugin.QualityLevel?.Value ?? 1;
         private static readonly SEGIStationeers.VoxelResolution[] VoxelResolutions =
-        [SEGIStationeers.VoxelResolution.Medium, SEGIStationeers.VoxelResolution.Medium, SEGIStationeers.VoxelResolution.High, SEGIStationeers.VoxelResolution.High];
+            [SEGIStationeers.VoxelResolution.Medium, SEGIStationeers.VoxelResolution.Medium, SEGIStationeers.VoxelResolution.High, SEGIStationeers.VoxelResolution.High];
         private static readonly bool[] HalfResolutionLevels = [true, false, false, false];
         private static readonly bool[] VoxelAntiAliasingLevels = [false, false, true, true];
         private static readonly float[] VoxelSpaceSizes = [16.0f, 16.0f, 32.0f, 32.0f];
@@ -206,6 +403,7 @@ namespace BeefsSEGIPlus
         public static float NightAmbientBrightness => SEGIPlugin.NightAmbientBrightness?.Value ?? 0.0f;
         public static bool LightweightMode => SEGIPlugin.LightweightMode?.Value ?? false;
         public static bool StochasticSampling => true;
+        public static int TargetFramerate => SEGIPlugin.TargetFramerate?.Value ?? 75;
 
         // Unused
         public static bool Enabled => SEGIPlugin.Enabled?.Value ?? false;
@@ -223,5 +421,34 @@ namespace BeefsSEGIPlus
                 _ => "Unknown"
             };
         }
+        public static float AdaptiveMinVoxelSpaceSize
+        {
+            get
+            {
+                int quality = SEGIPlugin.QualityLevel?.Value ?? 1;
+                return VoxelSpaceSizes[quality] * 0.5f; // Start at 50% of max
+            }
+        }
+
+        public static bool AdaptivePerformance => SEGIPlugin.AdaptivePerformance?.Value ?? false;
+        public static float AdaptiveScaleDownThreshold => 1.15f;  // Scale down if frame time >this
+        public static float AdaptiveScaleUpThreshold => 0.85f;    // Scale up only if frame time <this
+        public static float AdaptiveRate => 0.05f;
+        public static bool AdaptiveMaxHalfResolution => HalfResolutionLevels[CurrentQualityLevel];
+        public static bool AdaptiveMaxVoxelAA => VoxelAntiAliasingLevels[CurrentQualityLevel];
+        public static bool AdaptiveMaxBilateralFiltering => UseBilateralFilteringLevels[CurrentQualityLevel];
+        public static int AdaptiveMinVoxelRes => 64;
+        public static int AdaptiveMinCones => 4;
+        public static int AdaptiveMinConeTraceSteps => 6;
+        public static float AdaptiveHalfResOnThreshold => 0.65f;   // Turn ON half res below this
+        public static float AdaptiveHalfResOffThreshold => 0.75f;  // Turn OFF half res above this
+        public static float AdaptiveVoxelAAOffThreshold => 0.55f;  // Turn OFF voxel AA below this
+        public static float AdaptiveVoxelAAOnThreshold => 0.65f;   // Turn ON voxel AA above this
+        public static float AdaptiveBilateralOffThreshold => 0.65f; // Turn OFF filtering below this
+        public static float AdaptiveBilateralOnThreshold => 0.75f;  // Turn ON filtering above this
+        public static float AdaptiveVoxelInterval3Threshold => 0.05f; // Use interval=3 below this
+        public static float AdaptiveVoxelInterval2Threshold => 0.15f; // Use interval=2 below this
+        public static float AdaptiveVoxelInterval1Threshold => 0.25f; // Use interval=1 above this
+
     }
 }

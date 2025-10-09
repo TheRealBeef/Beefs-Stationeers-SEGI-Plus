@@ -2,7 +2,7 @@
 <ModMetadata xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
     <Name>Beef's SEGI Plus</Name>
     <Author>TheRealBeef</Author>
-    <Version>1.1.1</Version>
+    <Version>1.2.0</Version>
 
     <Description>
         [h1]Beef's SEGI Plus[/h1]
@@ -30,6 +30,10 @@
     </Description>
 
     <ChangeLog>
+        1.2.0:
+        - Added first pass of adaptive framerate control that works with the quality setting to try and improve performance
+        - This can be used at any quality setting and with or without lightweight mode
+        - This is automatically enabled with a target framerate of 60 - you can disable this or change the target framerate in the F11 menu
 
         1.1.1:
         - Improved lightweight mode cleanup

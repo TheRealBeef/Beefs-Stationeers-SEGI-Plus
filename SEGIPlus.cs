@@ -35,6 +35,27 @@ public class SEGIStationeers : MonoBehaviour
     private float shadowSpaceDepthRatio = 10.0f;
     private float _currentAmbientBrightness;
 
+    private float TargetFrameTime => 1.0f / ConfigData.TargetFramerate;
+    private float currentAdaptiveScale = 0.05f;
+    private Queue<float> frameTimeHistory = new Queue<float>();
+    private float frameTimeAverage = 0.016f;
+    private int adaptiveVoxelResolution;
+    private float adaptiveVoxelSpaceSize;
+    private float adaptiveShadowSpaceSize;
+    private int adaptiveCones;
+    private int adaptiveConeTraceSteps;
+    private bool adaptiveHalfResolution;
+    private bool adaptiveVoxelAA;
+    private bool adaptiveBilateralFiltering;
+    private int adaptiveMaxVoxelRes;
+    private float adaptiveMaxVoxelSpaceSize;
+    private float adaptiveMaxShadowSpaceSize;
+    private int adaptiveMaxCones;
+    private int adaptiveMaxConeTraceSteps;
+    private bool adaptiveSkipVoxelization;
+    private int adaptiveVoxelizationInterval = 1;
+    private int adaptiveVoxelizationFrameCounter = 0;
+
     private static readonly string ModDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
     private static AssetBundle _bundle;
     public static AssetBundle Bundle =>
@@ -208,7 +229,8 @@ public class SEGIStationeers : MonoBehaviour
     }
 
     private int MipFilterKernel => ConfigData.GaussianMipFilter ? 1 : 0;
-    private int DummyVoxelResolution => (int)ConfigData.VoxelResolution * (ConfigData.VoxelAntiAliasing ? 2 : 1);
+    // private int DummyVoxelResolution => _adaptiveVoxelResolution * (ConfigData.VoxelAntiAliasing ? 2 : 1);
+    private int DummyVoxelResolution => adaptiveVoxelResolution * (adaptiveVoxelAA ? 2 : 1);
     private int GIRenderRes => ConfigData.HalfResolution ? 2 : 1;
 
     private void Start()
@@ -243,7 +265,7 @@ public class SEGIStationeers : MonoBehaviour
 
         prevSunShadowResolution = sunShadowResolution;
 
-        if (volumeTextures[0].width != (int)ConfigData.VoxelResolution) CreateVolumeTextures();
+        if (volumeTextures[0].width != adaptiveVoxelResolution) CreateVolumeTextures();
 
         if (dummyVoxelTextureAAScaled.width != DummyVoxelResolution) ResizeDummyTexture();
 
@@ -251,6 +273,20 @@ public class SEGIStationeers : MonoBehaviour
         {
             OnLightweightModeChanged();
             _previousLightweightMode = ConfigData.LightweightMode;
+        }
+
+        if (ConfigData.AdaptivePerformance)
+        {
+            UpdateFrameData();
+            UpdateAdaptivePerformance();
+            if (volumeTextures != null && volumeTextures[0].width != adaptiveVoxelResolution)
+            {
+                CreateVolumeTextures();
+            }
+        }
+        else
+        {
+            UpdateAdaptivePerformance(); // it'll just set defaults when is false
         }
     }
 
@@ -266,27 +302,66 @@ public class SEGIStationeers : MonoBehaviour
 
         var previousActive = RenderTexture.active;
 
-        Shader.SetGlobalInt("SEGIVoxelAA", ConfigData.VoxelAntiAliasing ? 1 : 0);
+        if (ConfigData.AdaptivePerformance)
+        {
+            adaptiveVoxelizationFrameCounter++;
+            adaptiveSkipVoxelization = (adaptiveVoxelizationFrameCounter % adaptiveVoxelizationInterval) != 0;
+        }
+        else
+        {
+            adaptiveSkipVoxelization = false;
+        }
 
-        //Main voxelization work
+        // flip flop has to happen always otherwise stuttering
+        activeVolume = (voxelFlipFlop == 0) ? volumeTextures[0] : volumeTextureB;
+        previousActiveVolume = (voxelFlipFlop == 0) ? volumeTextureB : volumeTextures[0];
+        Shader.SetGlobalTexture("SEGIVolumeLevel0", activeVolume);
+        for (int i = 0; i < mipLevels - 1; i++)
+        {
+            Shader.SetGlobalTexture("SEGIVolumeLevel" + (i + 1).ToString(), volumeTextures[i + 1]);
+        }
+
+        if (adaptiveSkipVoxelization)
+        {
+            var interval = adaptiveVoxelSpaceSize / 4.0f;
+            Vector3 origin;
+            if (followTransform)
+                origin = followTransform.position;
+            else
+                origin = transform.position + transform.forward * adaptiveVoxelSpaceSize / 4.0f;
+
+            voxelSpaceOrigin = new Vector3(
+                Mathf.Round(origin.x / interval) * interval,
+                Mathf.Round(origin.y / interval) * interval,
+                Mathf.Round(origin.z / interval) * interval);
+
+            previousVoxelSpaceOrigin = voxelSpaceOrigin;
+
+            RenderTexture.active = previousActive;
+            return;
+        }
+
+        // Shader.SetGlobalInt("SEGIVoxelAA", ConfigData.VoxelAntiAliasing ? 1 : 0);
+        Shader.SetGlobalInt("SEGIVoxelAA", adaptiveVoxelAA ? 1 : 0);
+
         if (renderState == RenderState.Voxelize)
         {
-            activeVolume =
-                voxelFlipFlop == 0
-                    ? volumeTextures[0]
-                    : volumeTextureB; //Flip-flopping volume textures to avoid simultaneous read and write errors in shaders
-            previousActiveVolume = voxelFlipFlop == 0 ? volumeTextureB : volumeTextures[0];
+            // activeVolume =
+            //     voxelFlipFlop == 0
+            //         ? volumeTextures[0]
+            //         : volumeTextureB; //Flip-flopping volume textures to avoid simultaneous read and write errors in shaders
+            // previousActiveVolume = voxelFlipFlop == 0 ? volumeTextureB : volumeTextures[0];
 
             //Setup the voxel volume origin position
             var interval =
-                ConfigData.VoxelSpaceSize /
+                adaptiveVoxelSpaceSize /
                 4.0f; //The interval at which the voxel volume will be "locked" in world-space
             Vector3 origin;
             if (followTransform)
                 origin = followTransform.position;
             else
                 //GI is still flickering a bit when the scene view and the game view are opened at the same time
-                origin = transform.position + transform.forward * ConfigData.VoxelSpaceSize / 4.0f;
+                origin = transform.position + transform.forward * adaptiveVoxelSpaceSize / 4.0f;
 
             //Lock the voxel volume origin based on the interval
             voxelSpaceOrigin = new Vector3(Mathf.Round(origin.x / interval) * interval,
@@ -294,16 +369,16 @@ public class SEGIStationeers : MonoBehaviour
 
             //Calculate how much the voxel origin has moved since last voxelization pass. Used for scrolling voxel data in shaders to avoid ghosting when the voxel volume moves in the world
             voxelSpaceOriginDelta = voxelSpaceOrigin - previousVoxelSpaceOrigin;
-            Shader.SetGlobalVector("SEGIVoxelSpaceOriginDelta", voxelSpaceOriginDelta / ConfigData.VoxelSpaceSize);
+            Shader.SetGlobalVector("SEGIVoxelSpaceOriginDelta", voxelSpaceOriginDelta / adaptiveVoxelSpaceSize);
             previousVoxelSpaceOrigin = voxelSpaceOrigin;
 
 
             //Set the voxel camera (proxy camera used to render the scene for voxelization) parameters
             voxelCamera.enabled = false;
             voxelCamera.orthographic = true;
-            voxelCamera.orthographicSize = ConfigData.VoxelSpaceSize * 0.5f;
+            voxelCamera.orthographicSize = adaptiveVoxelSpaceSize * 0.5f;
             voxelCamera.nearClipPlane = 0.0f;
-            voxelCamera.farClipPlane = ConfigData.VoxelSpaceSize;
+            voxelCamera.farClipPlane = adaptiveVoxelSpaceSize;
             voxelCamera.depth = -2;
             voxelCamera.renderingPath = RenderingPath.Forward;
             voxelCamera.clearFlags = CameraClearFlags.Color;
@@ -312,11 +387,11 @@ public class SEGIStationeers : MonoBehaviour
 
             //Move the voxel camera game object and other related objects to the above calculated voxel space origin
             voxelCameraGameObject.transform.position =
-                voxelSpaceOrigin - Vector3.forward * ConfigData.VoxelSpaceSize * 0.5f;
+                voxelSpaceOrigin - Vector3.forward * adaptiveVoxelSpaceSize * 0.5f;
             voxelCameraGameObject.transform.rotation = rotationFront;
-            leftViewPoint.transform.position = voxelSpaceOrigin + Vector3.left * ConfigData.VoxelSpaceSize * 0.5f;
+            leftViewPoint.transform.position = voxelSpaceOrigin + Vector3.left * adaptiveVoxelSpaceSize * 0.5f;
             leftViewPoint.transform.rotation = rotationLeft;
-            topViewPoint.transform.position = voxelSpaceOrigin + Vector3.up * ConfigData.VoxelSpaceSize * 0.5f;
+            topViewPoint.transform.position = voxelSpaceOrigin + Vector3.up * adaptiveVoxelSpaceSize * 0.5f;
             topViewPoint.transform.rotation = rotationTop;
 
             //Set matrices needed for voxelization
@@ -330,7 +405,8 @@ public class SEGIStationeers : MonoBehaviour
             Shader.SetGlobalMatrix("SEGIWorldToVoxel", voxelCamera.worldToCameraMatrix);
             Shader.SetGlobalMatrix("SEGIVoxelProjection", voxelCamera.projectionMatrix);
             Shader.SetGlobalMatrix("SEGIVoxelProjectionInverse", voxelCamera.projectionMatrix.inverse);
-            Shader.SetGlobalInt("SEGIVoxelResolution", (int)ConfigData.VoxelResolution);
+            Shader.SetGlobalInt("SEGIVoxelResolution", adaptiveVoxelResolution);
+
             var voxelToGIProjection = shadowCamera.projectionMatrix * shadowCamera.worldToCameraMatrix *
                                       voxelCamera.cameraToWorldMatrix;
             Shader.SetGlobalMatrix("SEGIVoxelToGIProjection", voxelToGIProjection);
@@ -343,14 +419,14 @@ public class SEGIStationeers : MonoBehaviour
             shadowCamera.cullingMask = giCullingMask;
             var sunDirection = sun != null ? -sun.transform.forward : Vector3.down;
             var shadowCamPosition = voxelSpaceOrigin + Vector3.Normalize(sunDirection) *
-                ConfigData.ShadowSpaceSize * 0.5f * shadowSpaceDepthRatio;
+                adaptiveShadowSpaceSize * 0.5f * shadowSpaceDepthRatio;
 
             shadowCameraTransform.position = shadowCamPosition;
             shadowCameraTransform.LookAt(voxelSpaceOrigin, Vector3.up);
             shadowCamera.renderingPath = RenderingPath.Forward;
             shadowCamera.depthTextureMode |= DepthTextureMode.None;
-            shadowCamera.orthographicSize = ConfigData.ShadowSpaceSize;
-            shadowCamera.farClipPlane = ConfigData.ShadowSpaceSize * 2.0f * shadowSpaceDepthRatio;
+            shadowCamera.orthographicSize = adaptiveShadowSpaceSize;
+            shadowCamera.farClipPlane = adaptiveShadowSpaceSize * 2.0f * shadowSpaceDepthRatio;
 
             _currentAmbientBrightness = CalculateAmbientBrightness();
             Shader.SetGlobalVector("SEGISunlightVector",
@@ -378,8 +454,8 @@ public class SEGIStationeers : MonoBehaviour
             }
 
             clearCompute.SetTexture(0, "RG0", integerVolume);
-            clearCompute.SetInt("Res", (int)ConfigData.VoxelResolution);
-            clearCompute.Dispatch(0, (int)ConfigData.VoxelResolution / 16, (int)ConfigData.VoxelResolution / 16, 1);
+            clearCompute.SetInt("Res", adaptiveVoxelResolution);
+            clearCompute.Dispatch(0, adaptiveVoxelResolution / 16, adaptiveVoxelResolution / 16, 1);
 
             // LogRenderingLayers();
 
@@ -425,11 +501,11 @@ public class SEGIStationeers : MonoBehaviour
             transferIntsCompute.SetTexture(0, "PrevResult", previousActiveVolume);
             transferIntsCompute.SetTexture(0, "RG0", integerVolume);
             transferIntsCompute.SetInt("VoxelAA", ConfigData.VoxelAntiAliasing ? 1 : 0);
-            transferIntsCompute.SetInt("Resolution", (int)ConfigData.VoxelResolution);
+            transferIntsCompute.SetInt("Resolution", adaptiveVoxelResolution);
             transferIntsCompute.SetVector("VoxelOriginDelta",
-                voxelSpaceOriginDelta / ConfigData.VoxelSpaceSize * (int)ConfigData.VoxelResolution);
-            transferIntsCompute.Dispatch(0, (int)ConfigData.VoxelResolution / 16,
-                (int)ConfigData.VoxelResolution / 16, 1);
+                voxelSpaceOriginDelta / adaptiveVoxelSpaceSize * adaptiveVoxelResolution);
+            transferIntsCompute.Dispatch(0, adaptiveVoxelResolution / 16,
+                adaptiveVoxelResolution / 16, 1);
 
             //Manually filter/render mip maps
             Shader.SetGlobalTexture("SEGIVolumeLevel0", activeVolume);
@@ -438,7 +514,7 @@ public class SEGIStationeers : MonoBehaviour
                 var source = volumeTextures[i];
                 if (i == 0) source = activeVolume;
 
-                var destinationRes = (int)ConfigData.VoxelResolution / Mathf.RoundToInt(Mathf.Pow(2, i + 1.0f));
+                var destinationRes = adaptiveVoxelResolution / Mathf.RoundToInt(Mathf.Pow(2, i + 1.0f));
                 mipFilterCompute.SetInt("destinationRes", destinationRes);
                 mipFilterCompute.SetTexture(MipFilterKernel, "Source", source);
                 mipFilterCompute.SetTexture(MipFilterKernel, "Destination", volumeTextures[i + 1]);
@@ -475,7 +551,7 @@ public class SEGIStationeers : MonoBehaviour
             //Transfer the data from the volume integer texture to the irradiance volume texture. This result is added to the next main voxelization pass to create a feedback loop for infinite bounces
             transferIntsCompute.SetTexture(1, "Result", secondaryIrradianceVolume);
             transferIntsCompute.SetTexture(1, "RG0", integerVolume);
-            transferIntsCompute.SetInt("Resolution", (int)ConfigData.VoxelResolution);
+            transferIntsCompute.SetInt("Resolution", adaptiveVoxelResolution);
             transferIntsCompute.Dispatch(1, bounceThreadGroups, bounceThreadGroups, bounceThreadGroups);
             Shader.SetGlobalTexture("SEGIVolumeTexture1", secondaryIrradianceVolume);
 
@@ -485,7 +561,7 @@ public class SEGIStationeers : MonoBehaviour
         RenderTexture.active = previousActive;
     }
 
-[ImageEffectOpaque]
+    [ImageEffectOpaque]
     private void OnRenderImage(RenderTexture source, RenderTexture destination)
     {
         if (notReadyToRender)
@@ -505,8 +581,11 @@ public class SEGIStationeers : MonoBehaviour
         material.SetVector("CameraPosition", transform.position);
         material.SetFloat("DeltaTime", Time.deltaTime);
         material.SetInt("StochasticSampling", ConfigData.StochasticSampling ? 1 : 0);
-        material.SetInt("TraceDirections", ConfigData.Cones);
-        material.SetInt("TraceSteps", ConfigData.ConeTraceSteps);
+        // material.SetInt("TraceDirections", ConfigData.Cones);
+        // material.SetInt("TraceSteps", ConfigData.ConeTraceSteps);
+        material.SetInt("TraceDirections", adaptiveCones);
+        material.SetInt("TraceSteps", adaptiveConeTraceSteps);
+
         material.SetFloat("TraceLength", ConfigData.ConeLength);
         material.SetFloat("ConeSize", ConfigData.ConeWidth);
         material.SetFloat("OcclusionStrength", ConfigData.OcclusionStrength);
@@ -515,7 +594,9 @@ public class SEGIStationeers : MonoBehaviour
         material.SetFloat("GIGain", ConfigData.GIGain);
         material.SetFloat("NearLightGain", ConfigData.NearLightGain);
         material.SetFloat("NearOcclusionStrength", ConfigData.NearOcclusionStrength);
-        material.SetInt("HalfResolution", ConfigData.HalfResolution ? 1 : 0);
+        // material.SetInt("HalfResolution", ConfigData.HalfResolution ? 1 : 0);
+        material.SetInt("HalfResolution", adaptiveHalfResolution ? 1 : 0);
+
         material.SetFloat("FarOcclusionStrength", ConfigData.FarOcclusionStrength);
         material.SetFloat("FarthestOcclusionStrength", ConfigData.FarthestOcclusionStrength);
         material.SetTexture("NoiseTexture", blueNoise[frameCounter % 64]);
@@ -563,7 +644,8 @@ public class SEGIStationeers : MonoBehaviour
         Graphics.Blit(source, gi2, material, Pass.DiffuseTrace);
 
         //Perform bilateral filtering
-        if (ConfigData.UseBilateralFiltering)
+        // if (ConfigData.UseBilateralFiltering)
+        if (adaptiveBilateralFiltering)
         {
             material.SetVector("Kernel", new Vector2(0.0f, 1.0f));
             Graphics.Blit(gi2, gi1, material, Pass.BilateralBlur);
@@ -661,13 +743,13 @@ public class SEGIStationeers : MonoBehaviour
         var prevColor = Gizmos.color;
         Gizmos.color = new Color(1.0f, 0.25f, 0.0f, 0.5f);
         Gizmos.DrawCube(voxelSpaceOrigin,
-            new Vector3(ConfigData.VoxelSpaceSize, ConfigData.VoxelSpaceSize, ConfigData.VoxelSpaceSize));
+            new Vector3(adaptiveVoxelSpaceSize, adaptiveVoxelSpaceSize, adaptiveVoxelSpaceSize));
         Gizmos.color = new Color(1.0f, 0.0f, 0.0f, 0.1f);
         Gizmos.color = prevColor;
         UnityEngine.SceneManagement.SceneManager.sceneLoaded -= OnSceneLoaded;
     }
 
- private void InitCheck()
+    private void InitCheck()
     {
         if (initalized) return;
 
@@ -710,10 +792,10 @@ public class SEGIStationeers : MonoBehaviour
             shadowCamera.enabled = false;
             shadowCamera.depth = attachedCamera.depth - 1;
             shadowCamera.orthographic = true;
-            shadowCamera.orthographicSize = ConfigData.ShadowSpaceSize;
+            shadowCamera.orthographicSize = adaptiveShadowSpaceSize;
             shadowCamera.clearFlags = CameraClearFlags.SolidColor;
             shadowCamera.backgroundColor = new Color(0.0f, 0.0f, 0.0f, 1.0f);
-            shadowCamera.farClipPlane = ConfigData.ShadowSpaceSize * 2.0f * shadowSpaceDepthRatio;
+            shadowCamera.farClipPlane = adaptiveShadowSpaceSize * 2.0f * shadowSpaceDepthRatio;
             shadowCamera.cullingMask = giCullingMask;
             shadowCamera.useOcclusionCulling = false;
             shadowCameraTransform = shadowCameraGameObject.transform;
@@ -732,9 +814,9 @@ public class SEGIStationeers : MonoBehaviour
             voxelCamera = voxelCameraGameObject.AddComponent<Camera>();
             voxelCamera.enabled = false;
             voxelCamera.orthographic = true;
-            voxelCamera.orthographicSize = ConfigData.VoxelSpaceSize * 0.5f;
+            voxelCamera.orthographicSize = adaptiveVoxelSpaceSize * 0.5f;
             voxelCamera.nearClipPlane = 0.0f;
-            voxelCamera.farClipPlane = ConfigData.VoxelSpaceSize;
+            voxelCamera.farClipPlane = adaptiveVoxelSpaceSize;
             voxelCamera.depth = -2;
             voxelCamera.renderingPath = RenderingPath.Forward;
             voxelCamera.clearFlags = CameraClearFlags.Color;
@@ -776,6 +858,23 @@ public class SEGIStationeers : MonoBehaviour
         };
         sunDepthTexture.Create();
         sunDepthShader.hideFlags = HideFlags.HideAndDontSave;
+
+        frameTimeHistory = new Queue<float>();
+        currentAdaptiveScale = 1.0f;
+        adaptiveMaxVoxelRes = (int)ConfigData.VoxelResolution;
+        adaptiveMaxVoxelSpaceSize = ConfigData.VoxelSpaceSize;
+        adaptiveMaxShadowSpaceSize = ConfigData.ShadowSpaceSize;
+        adaptiveMaxCones = ConfigData.Cones;
+        adaptiveMaxConeTraceSteps = ConfigData.ConeTraceSteps;
+
+        adaptiveVoxelResolution = adaptiveMaxVoxelRes;
+        adaptiveVoxelSpaceSize = adaptiveMaxVoxelSpaceSize;
+        adaptiveShadowSpaceSize = adaptiveMaxShadowSpaceSize;
+        adaptiveCones = adaptiveMaxCones;
+        adaptiveConeTraceSteps = adaptiveMaxConeTraceSteps;
+        adaptiveHalfResolution = ConfigData.HalfResolution;
+        adaptiveVoxelAA = ConfigData.VoxelAntiAliasing;
+        adaptiveBilateralFiltering = ConfigData.UseBilateralFiltering;
 
         CreateVolumeTextures();
 
@@ -918,7 +1017,7 @@ public class SEGIStationeers : MonoBehaviour
         _culledEmissiveRenderers.Clear();
         if (_culledEmissiveRenderers.Capacity < 500)
             _culledEmissiveRenderers.Capacity = 500;
-        var halfSize = ConfigData.VoxelSpaceSize * 0.75f;
+        var halfSize = adaptiveVoxelSpaceSize * 0.75f;
         var voxelMin = voxelSpaceOrigin - Vector3.one * halfSize;
         var voxelMax = voxelSpaceOrigin + Vector3.one * halfSize;
         for (var i = 0; i < _cachedEmissiveRenderers.Count; i++)
@@ -981,7 +1080,7 @@ public class SEGIStationeers : MonoBehaviour
         return false;
     }
 
-private void CreateVolumeTextures()
+    private void CreateVolumeTextures()
     {
         if (volumeTextures != null)
             for (var i = 0; i < mipLevels; i++)
@@ -991,7 +1090,7 @@ private void CreateVolumeTextures()
         volumeTextures = new RenderTexture[mipLevels];
         for (var i = 0; i < mipLevels; i++)
         {
-            var resolution = (int)ConfigData.VoxelResolution / Mathf.RoundToInt(Mathf.Pow(2, i));
+            var resolution = adaptiveVoxelResolution / Mathf.RoundToInt(Mathf.Pow(2, i));
             volumeTextures[i] = new RenderTexture(resolution, resolution, 0, RenderTextureFormat.ARGBHalf,
                 RenderTextureReadWrite.Linear)
             {
@@ -1008,11 +1107,11 @@ private void CreateVolumeTextures()
 
         if (volumeTextureB) CleanupTexture(ref volumeTextureB);
 
-        volumeTextureB = new RenderTexture((int)ConfigData.VoxelResolution, (int)ConfigData.VoxelResolution, 0,
+        volumeTextureB = new RenderTexture(adaptiveVoxelResolution, adaptiveVoxelResolution, 0,
             RenderTextureFormat.ARGBHalf, RenderTextureReadWrite.Linear)
         {
             dimension = TextureDimension.Tex3D,
-            volumeDepth = (int)ConfigData.VoxelResolution,
+            volumeDepth = adaptiveVoxelResolution,
             enableRandomWrite = true,
             filterMode = FilterMode.Bilinear,
             autoGenerateMips = false,
@@ -1023,11 +1122,11 @@ private void CreateVolumeTextures()
 
         if (secondaryIrradianceVolume) CleanupTexture(ref secondaryIrradianceVolume);
 
-        secondaryIrradianceVolume = new RenderTexture((int)ConfigData.VoxelResolution,
-            (int)ConfigData.VoxelResolution, 0, RenderTextureFormat.ARGBHalf, RenderTextureReadWrite.Linear)
+        secondaryIrradianceVolume = new RenderTexture(adaptiveVoxelResolution,
+            adaptiveVoxelResolution, 0, RenderTextureFormat.ARGBHalf, RenderTextureReadWrite.Linear)
         {
             dimension = TextureDimension.Tex3D,
-            volumeDepth = (int)ConfigData.VoxelResolution,
+            volumeDepth = adaptiveVoxelResolution,
             enableRandomWrite = true,
             filterMode = FilterMode.Point,
             autoGenerateMips = false,
@@ -1039,11 +1138,11 @@ private void CreateVolumeTextures()
 
         if (integerVolume) CleanupTexture(ref integerVolume);
 
-        integerVolume = new RenderTexture((int)ConfigData.VoxelResolution, (int)ConfigData.VoxelResolution, 0,
+        integerVolume = new RenderTexture(adaptiveVoxelResolution, adaptiveVoxelResolution, 0,
             RenderTextureFormat.RInt, RenderTextureReadWrite.Linear)
         {
             dimension = TextureDimension.Tex3D,
-            volumeDepth = (int)ConfigData.VoxelResolution,
+            volumeDepth = adaptiveVoxelResolution,
             enableRandomWrite = true,
             filterMode = FilterMode.Point,
             hideFlags = HideFlags.HideAndDontSave
@@ -1110,7 +1209,7 @@ private void CreateVolumeTextures()
 
         if (dummyVoxelTextureFixed) CleanupTexture(ref dummyVoxelTextureFixed);
 
-        dummyVoxelTextureFixed = new RenderTexture((int)ConfigData.VoxelResolution, (int)ConfigData.VoxelResolution,
+        dummyVoxelTextureFixed = new RenderTexture(adaptiveVoxelResolution, adaptiveVoxelResolution,
             0, RenderTextureFormat.ARGBHalf);
         dummyVoxelTextureFixed.Create();
         dummyVoxelTextureFixed.hideFlags = HideFlags.HideAndDontSave;
@@ -1167,7 +1266,7 @@ private void CreateVolumeTextures()
     {
         foreach (var kvp in _layerRestoreCache)
         {
-            if (kvp.Key != null)
+            if (kvp.Key != null && kvp.Key)
                 kvp.Key.layer = kvp.Value;
         }
         _layerRestoreCache.Clear();
@@ -1219,5 +1318,151 @@ private void CreateVolumeTextures()
         {
             SEGIPlugin.Log.LogInfo($"EXCLUDED: '{objectName}' materials:[{materialNames}] reason:{reason}");
         }
+    }
+
+        private void UpdateFrameData()
+    {
+        float currentFrameTime = Time.unscaledDeltaTime;
+        if (frameTimeHistory.Count >= 30) //30frame avg
+        {
+            frameTimeHistory.Dequeue();
+        }
+
+        frameTimeHistory.Enqueue(currentFrameTime);
+
+        if (frameTimeHistory.Count > 0)
+        {
+            float sum = 0f;
+            foreach (var time in frameTimeHistory)
+                sum += time;
+            frameTimeAverage = sum / frameTimeHistory.Count;
+        }
+    }
+
+    private void UpdateAdaptivePerformance()
+    {
+        if (!ConfigData.AdaptivePerformance)
+        {
+            adaptiveVoxelResolution = adaptiveMaxVoxelRes;
+            adaptiveVoxelSpaceSize = adaptiveMaxVoxelSpaceSize;
+            adaptiveShadowSpaceSize = adaptiveMaxShadowSpaceSize;
+            adaptiveCones = adaptiveMaxCones;
+            adaptiveConeTraceSteps = adaptiveMaxConeTraceSteps;
+            adaptiveHalfResolution = ConfigData.HalfResolution;
+            adaptiveVoxelAA = ConfigData.VoxelAntiAliasing;
+            adaptiveBilateralFiltering = ConfigData.UseBilateralFiltering;
+            adaptiveVoxelizationInterval = 1;
+            return;
+        }
+
+        float scaleDownThreshold = ConfigData.AdaptiveScaleDownThreshold;
+        float scaleUpThreshold = ConfigData.AdaptiveScaleUpThreshold;
+        float targetFrameTime = TargetFrameTime;
+        float frameTimeRatio = frameTimeAverage / targetFrameTime;
+
+        float scaleDelta = 0f;
+        if (frameTimeRatio > scaleDownThreshold) // less quality needed
+        {
+            scaleDelta = -(frameTimeRatio - scaleDownThreshold) * ConfigData.AdaptiveRate;
+        }
+        else if (frameTimeRatio < scaleUpThreshold) // more quality wanted
+        {
+            scaleDelta = (scaleUpThreshold - frameTimeRatio) * ConfigData.AdaptiveRate;
+        }
+
+        currentAdaptiveScale = Mathf.Clamp(
+            currentAdaptiveScale + scaleDelta,
+            0.125f,
+            1.0f
+        );
+
+        float targetVoxelSpaceSize;
+        int targetRes;
+        float minVoxelSpaceSize = ConfigData.AdaptiveMinVoxelSpaceSize;
+
+        if (currentAdaptiveScale < 0.9f)
+        {
+            float resScale = (currentAdaptiveScale - 0.15f) / (0.9f - 0.15f);
+
+            float minRatio = minVoxelSpaceSize / adaptiveMaxVoxelSpaceSize;
+
+            if (resScale > minRatio)
+            {
+                targetVoxelSpaceSize = Mathf.Lerp(minVoxelSpaceSize, adaptiveMaxVoxelSpaceSize,
+                    (resScale - minRatio) / (1.0f - minRatio));
+                targetRes = adaptiveMaxVoxelRes;
+            }
+            else
+            {
+                targetVoxelSpaceSize = minVoxelSpaceSize;
+                float moreAggressivelyAdaptiveAdaptive = resScale / minRatio;
+                targetRes = Mathf.RoundToInt(Mathf.Lerp(ConfigData.AdaptiveMinVoxelRes, adaptiveMaxVoxelRes, moreAggressivelyAdaptiveAdaptive));
+            }
+            targetRes = Mathf.Max(ConfigData.AdaptiveMinVoxelRes, (targetRes / 32) * 32);
+        }
+        else
+        {
+            targetVoxelSpaceSize = adaptiveMaxVoxelSpaceSize;
+            targetRes = adaptiveMaxVoxelRes;
+        }
+
+        int newVoxelRes = Mathf.Clamp(targetRes, ConfigData.AdaptiveMinVoxelRes, adaptiveMaxVoxelRes);
+        if (Mathf.Abs(newVoxelRes - adaptiveVoxelResolution) >= 32)
+        {
+            adaptiveVoxelResolution = newVoxelRes;
+        }
+
+        if (Mathf.Abs(targetVoxelSpaceSize - adaptiveVoxelSpaceSize) >= 1.0f)
+        {
+            adaptiveVoxelSpaceSize = targetVoxelSpaceSize;
+            adaptiveShadowSpaceSize = targetVoxelSpaceSize * 0.75f;
+        }
+
+        adaptiveCones = Mathf.Min(adaptiveMaxCones,
+            Mathf.Max(ConfigData.AdaptiveMinCones,
+                Mathf.RoundToInt(Mathf.Lerp(ConfigData.AdaptiveMinCones, adaptiveMaxCones, currentAdaptiveScale))));
+
+        adaptiveConeTraceSteps = Mathf.Min(adaptiveMaxConeTraceSteps,
+            Mathf.Max(ConfigData.AdaptiveMinConeTraceSteps,
+                Mathf.RoundToInt(Mathf.Lerp(ConfigData.AdaptiveMinConeTraceSteps, adaptiveMaxConeTraceSteps, currentAdaptiveScale))));
+
+
+        if (currentAdaptiveScale >= 0.9f)
+        {
+            adaptiveHalfResolution = ConfigData.AdaptiveMaxHalfResolution;
+            adaptiveVoxelAA = ConfigData.AdaptiveMaxVoxelAA;
+            adaptiveBilateralFiltering = ConfigData.AdaptiveMaxBilateralFiltering;
+        }
+        else
+        {
+            if (currentAdaptiveScale < ConfigData.AdaptiveHalfResOnThreshold)
+                adaptiveHalfResolution = true;
+            else if (currentAdaptiveScale >= ConfigData.AdaptiveHalfResOffThreshold)
+                adaptiveHalfResolution = ConfigData.AdaptiveMaxHalfResolution;
+
+            if (currentAdaptiveScale < ConfigData.AdaptiveVoxelAAOffThreshold)
+                adaptiveVoxelAA = false;
+            else if (currentAdaptiveScale >= ConfigData.AdaptiveVoxelAAOnThreshold)
+                adaptiveVoxelAA = ConfigData.AdaptiveMaxVoxelAA;
+
+            if (currentAdaptiveScale < ConfigData.AdaptiveBilateralOffThreshold)
+                adaptiveBilateralFiltering = false;
+            else if (currentAdaptiveScale >= ConfigData.AdaptiveBilateralOnThreshold)
+                adaptiveBilateralFiltering = ConfigData.AdaptiveMaxBilateralFiltering;
+        }
+
+        if (currentAdaptiveScale < ConfigData.AdaptiveVoxelInterval3Threshold)
+            adaptiveVoxelizationInterval = 3;
+        else if (currentAdaptiveScale < ConfigData.AdaptiveVoxelInterval2Threshold)
+            adaptiveVoxelizationInterval = 2;
+        else if (currentAdaptiveScale > ConfigData.AdaptiveVoxelInterval1Threshold)
+            adaptiveVoxelizationInterval = 1;
+
+        // float currentFPS = 1.0f / frameTimeAverage;
+        // SEGIPlugin.Log.LogInfo(
+        //     $"FPS={currentFPS:F1} Target={ConfigData.TargetFramerate} Scale={currentAdaptiveScale:F2} " +
+        //     $"VoxelRes={adaptiveVoxelResolution} Cones={adaptiveCones} Steps={adaptiveConeTraceSteps} " +
+        //     $"HalfRes={adaptiveHalfResolution} VoxelAA={adaptiveVoxelAA} Filtering={adaptiveBilateralFiltering} " +
+        //     $"Interval={adaptiveVoxelizationInterval}");
     }
 }
