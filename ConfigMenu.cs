@@ -59,14 +59,22 @@ public class ConfigMenu : MonoBehaviour
         {
             if (!_windowRectInitialized)
                 InitializeWindowRect();
+
             Matrix4x4 oldMatrix = GUI.matrix;
             GUI.matrix = Matrix4x4.Scale(new Vector3(_guiScale, _guiScale, 1.0f));
+
             Rect scaledWindowRect = new Rect(
                 _windowRect.x / _guiScale,
                 _windowRect.y / _guiScale,
                 _windowRect.width / _guiScale,
                 _windowRect.height / _guiScale
             );
+
+            Color oldColor = GUI.color;
+            GUI.color = new Color(0.05f, 0.05f, 0.05f, 1f);
+            GUI.Box(new Rect(scaledWindowRect.x - 2, scaledWindowRect.y - 2, scaledWindowRect.width + 4, scaledWindowRect.height + 4), "");
+            GUI.color = oldColor;
+
             scaledWindowRect = GUILayout.Window(0, scaledWindowRect, ConfigWindow, "SEGI Plus Configuration (F11 to close)");
             _windowRect = new Rect(
                 scaledWindowRect.x * _guiScale,
@@ -175,7 +183,7 @@ public class ConfigMenu : MonoBehaviour
             {
                 GUILayout.Space(5);
                 GUILayout.Label($"Target Framerate: {SEGIPlugin.TargetFramerate.Value} FPS");
-                var newTargetFPS = Mathf.RoundToInt(GUILayout.HorizontalSlider(SEGIPlugin.TargetFramerate.Value, 30, 240));
+                var newTargetFPS = Mathf.RoundToInt(GUILayout.HorizontalSlider(SEGIPlugin.TargetFramerate.Value, 15, 240));
                 if (newTargetFPS != SEGIPlugin.TargetFramerate.Value) SEGIPlugin.TargetFramerate.Value = newTargetFPS;
                 GUILayout.TextArea("The system will try to adjust SEGI Plus to stay around this framerate", GUI.skin.box);
             }
@@ -183,22 +191,33 @@ public class ConfigMenu : MonoBehaviour
             GUILayout.Space(10);
             GUILayout.Label("=== Gain Controls ===", GUI.skin.box, GUILayout.ExpandWidth(true));
 
-            GUILayout.Label($"Global Illumination Gain: {SEGIPlugin.GIGain.Value:F2}");
+            float giMultiplier = SEGIPlugin.UseGainMultiplier.Value ? 10f : 1f;
+
+            GUILayout.Label($"Global Illumination Gain: {SEGIPlugin.GIGain.Value:F2}" +
+                            (SEGIPlugin.UseGainMultiplier.Value ? $" (Applied: {SEGIPlugin.GIGain.Value * giMultiplier:F2})" : ""));
             var newGiGain = GUILayout.HorizontalSlider(SEGIPlugin.GIGain.Value, 0.0f, 8.0f);
             if (!Mathf.Approximately(newGiGain, SEGIPlugin.GIGain.Value)) SEGIPlugin.GIGain.Value = newGiGain;
             GUILayout.TextArea("Master brightness control for all global illumination effects.\nIncrease if lighting seems too dim.", GUI.skin.box);
 
-            GUILayout.Label($"Near Light Gain: {SEGIPlugin.NearLightGain.Value:F2}");
+            GUILayout.Label($"Near Light Gain: {SEGIPlugin.NearLightGain.Value:F2}" +
+                            (SEGIPlugin.UseGainMultiplier.Value ? $" (Applied: {SEGIPlugin.NearLightGain.Value * giMultiplier:F2})" : ""));
             var newNearLightGain = GUILayout.HorizontalSlider(SEGIPlugin.NearLightGain.Value, 0.0f, 2.0f);
             if (!Mathf.Approximately(newNearLightGain, SEGIPlugin.NearLightGain.Value))
                 SEGIPlugin.NearLightGain.Value = newNearLightGain;
             GUILayout.TextArea("Brightens lighting effects close to the camera.\nUseful for interior lighting.", GUI.skin.box);
 
-            GUILayout.Label($"Secondary Bounce Gain: {SEGIPlugin.SecondaryBounceGain.Value:F2}");
+            GUILayout.Label($"Secondary Bounce Gain: {SEGIPlugin.SecondaryBounceGain.Value:F2}" +
+                            (SEGIPlugin.UseGainMultiplier.Value ? $" (Applied: {SEGIPlugin.SecondaryBounceGain.Value * giMultiplier:F2})" : ""));
             var newSecondaryBounce = GUILayout.HorizontalSlider(SEGIPlugin.SecondaryBounceGain.Value, 0.0f, 2.0f);
             if (!Mathf.Approximately(newSecondaryBounce, SEGIPlugin.SecondaryBounceGain.Value))
                 SEGIPlugin.SecondaryBounceGain.Value = newSecondaryBounce;
             GUILayout.TextArea("Controls secondary light bounces. Higher values = more light bouncing.\nIt adds more light in total so interacts with the day/night ambient brightness settings", GUI.skin.box);
+
+            GUILayout.Space(10);
+
+            var currentMultiplier = SEGIPlugin.UseGainMultiplier.Value;
+            var newMultiplier = GUILayout.Toggle(currentMultiplier, $"x10 Gain Multiplier ({currentMultiplier})");
+            if (newMultiplier != currentMultiplier) SEGIPlugin.UseGainMultiplier.Value = newMultiplier;
 
             GUILayout.Space(10);
             GUILayout.Label("Press F11 to toggle this menu", GUILayout.ExpandWidth(true));

@@ -48,6 +48,8 @@ namespace BeefsSEGIPlus
         public static ConfigEntry<bool> LightweightMode;
         public static ConfigEntry<int> TargetFramerate;
         public static ConfigEntry<bool> AdaptivePerformance;
+        public static ConfigEntry<bool> UseGainMultiplier;
+
 
         private static SEGIStationeers SegiStationeersInstance { get; set; }
 
@@ -66,7 +68,12 @@ namespace BeefsSEGIPlus
                 "- This can be used at any quality setting and with or without lightweight mode\n\n" +
                 "## IMPORTANT ##\n" +
                 "- This isn't automatically enabled as it's yet experimental - you can enable this in settings\n\n" +
-                "Press F11 in-game to access the configuration menu or use the workshop button on the left and click on the mod to adjust settings!",
+                "Press F11 in-game to access the configuration menu or use the workshop button on the left and click on the mod to adjust settings!\n\n" +
+                "Changelog v1.2.1:\n" +
+                "- Widened adaptive framerate slider choices\n" +
+                "- Automatically remove/mark read the major update popup if go into world\n" +
+                "- Added an x10 multiplier option if you want to play around with silly gain values\n" +
+                "- Darkened background of F11 menu slightly",
                 defaultSeen: false);
 
             popupQueue = new Queue<UpdatePopupItem>();
@@ -104,6 +111,24 @@ namespace BeefsSEGIPlus
                         {
                             SegiStationeersInstance.sun = worldSun;
                             Log.LogInfo($"SEGI Plus sun light: {worldSun.name}");
+
+                            if (showPopup && currentPopup != null)
+                            {
+                                currentPopup.Config.Value = true;
+                                Config.Save();
+                                if (popupQueue.Count > 0)
+                                {
+                                    currentPopup = popupQueue.Dequeue();
+                                    scrollPos = Vector2.zero;
+                                    popupRectInitialized = false;
+                                }
+                                else
+                                {
+                                    currentPopup = null;
+                                    showPopup = false;
+                                    pendingShow = false;
+                                }
+                            }
                         }
                     }
                     catch {}
@@ -154,6 +179,7 @@ namespace BeefsSEGIPlus
         private void BindAllConfigs()
         {
             Enabled = Config.Bind("General", "Enable (There is also F11 config menu in-game)", true, "Enable SEGI Plus global illumination. There is an F11 config menu in-game too");
+            UseGainMultiplier = Config.Bind("General", "Use x10 Gain Multiplier (applies to Global/Near/Secondary gains)", false, "Multiply all gain values by 10. Why? I dunno, but you can");
             NearLightGain = Config.Bind("Gain Knobs", "Near Light Gain", 0.0f,
                 new ConfigDescription("Near light gain", new AcceptableValueRange<float>(0f, 2f)));
             GIGain = Config.Bind("Gain Knobs", "Global Illumination Gain", 3.0f,
@@ -163,7 +189,7 @@ namespace BeefsSEGIPlus
             DayAmbientBrightness = Config.Bind("Lighting", "Day Ambient Brightness", 0.05f,
                 new ConfigDescription("Ambient light brightness during day", new AcceptableValueRange<float>(0.001f, 0.25f)));
             NightAmbientBrightness = Config.Bind("Lighting", "Night Ambient Brightness", 0.0f,
-                new ConfigDescription("Ambient light brightness during night", new AcceptableValueRange<float>(0.000f,0.01f)));
+                new ConfigDescription("Ambient light brightness during night", new AcceptableValueRange<float>(0.000f, 0.01f)));
             QualityLevel = Config.Bind("Performance", "Quality Level - 0 for Low, 3 for Extreme.", 1,
                 new ConfigDescription("Quality (0=Low, 1=Medium, 2=High, 3=Extreme)",
                     new AcceptableValueRange<int>(0, 3)));
@@ -172,8 +198,8 @@ namespace BeefsSEGIPlus
             AdaptivePerformance = Config.Bind("Performance", "Adaptive Performance", false,
                 "Automatically adjusts settings to maintain framerate");
             TargetFramerate = Config.Bind("Performance", "Target Framerate", 60,
-                new ConfigDescription("he system will try to adjust SEGI Plus to stay around this framerate",
-                    new AcceptableValueRange<int>(30, 144)));
+                new ConfigDescription("The system will try to adjust SEGI Plus to stay around this framerate",
+                    new AcceptableValueRange<int>(15, 240)));
         }
 
         private IEnumerator InitializeSEGICoroutine()
@@ -388,9 +414,35 @@ namespace BeefsSEGIPlus
         public static float ConeWidth => ConeWidths[CurrentQualityLevel];
         public static float ConeTraceBias => 0.65f;
         public static float TemporalBlendWeight => 0.1f;
-        public static float GIGain => SEGIPlugin.GIGain?.Value ?? 0.6f;
-        public static float NearLightGain => SEGIPlugin.NearLightGain?.Value ?? 1.2f;
-        public static float SecondaryBounceGain => SEGIPlugin.SecondaryBounceGain?.Value ?? 0.4f;
+        public static float GIGain
+        {
+            get
+            {
+                float baseValue = SEGIPlugin.GIGain?.Value ?? 0.6f;
+                bool useMultiplier = SEGIPlugin.UseGainMultiplier?.Value ?? false;
+                return useMultiplier ? baseValue * 10f : baseValue;
+            }
+        }
+
+        public static float NearLightGain
+        {
+            get
+            {
+                float baseValue = SEGIPlugin.NearLightGain?.Value ?? 1.2f;
+                bool useMultiplier = SEGIPlugin.UseGainMultiplier?.Value ?? false;
+                return useMultiplier ? baseValue * 10f : baseValue;
+            }
+        }
+
+        public static float SecondaryBounceGain
+        {
+            get
+            {
+                float baseValue = SEGIPlugin.SecondaryBounceGain?.Value ?? 0.4f;
+                bool useMultiplier = SEGIPlugin.UseGainMultiplier?.Value ?? false;
+                return useMultiplier ? baseValue * 10f : baseValue;
+            }
+        }
         public static float OcclusionStrength => 0.86f;
         public static float NearOcclusionStrength => 0.42f;
         public static float OcclusionPower => 1.0f;

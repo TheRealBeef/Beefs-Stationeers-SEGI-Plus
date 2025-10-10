@@ -2,7 +2,7 @@
 <ModMetadata xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
     <Name>Beef's SEGI Plus</Name>
     <Author>TheRealBeef</Author>
-    <Version>1.2.0</Version>
+    <Version>1.2.1</Version>
 
     <Description>
         [h1]Beef's SEGI Plus[/h1]
@@ -30,6 +30,12 @@
     </Description>
 
     <ChangeLog>
+        1.2.1:
+        - Widened adaptive framerate slider choices
+        - Automatically remove/mark read the major update popup if go into world
+        - Added an x10 multiplier option if you want to play around with silly gain values
+        - Darkened background of F11 menu slightly
+
         1.2.0:
         - Added first pass of adaptive framerate control that works with the quality setting to try and improve performance
         - This can be used at any quality setting and with or without lightweight mode

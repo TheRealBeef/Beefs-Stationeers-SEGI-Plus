@@ -41,6 +41,12 @@ Built upon the work of:
 
 ## Changelog
 
+>### Version 1.2.1:
+> - Widened adaptive framerate slider choices
+> - Automatically remove/mark read the major update popup if go into world
+> - Added an x10 multiplier option if you want to play around with silly gain values
+> - Darkened background of F11 menu slightly
+
 >### Version 1.2.0:
 > - Added first pass of adaptive framerate control that works with the quality setting to try and improve performance
 > - This can be used at any quality setting and with or without lightweight mode
