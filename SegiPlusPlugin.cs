@@ -65,7 +65,7 @@ namespace BeefsSEGIPlus
                 "- Added first pass of adaptive framerate control that works with the quality setting to try and improve performance\n" +
                 "- This can be used at any quality setting and with or without lightweight mode\n\n" +
                 "## IMPORTANT ##\n" +
-                "- This is automatically enabled with a target framerate of 60 - you can disable this or change the target in settings\n\n" +
+                "- This isn't automatically enabled as it's yet experimental - you can enable this in settings\n\n" +
                 "Press F11 in-game to access the configuration menu or use the workshop button on the left and click on the mod to adjust settings!",
                 defaultSeen: false);
 
@@ -169,7 +169,7 @@ namespace BeefsSEGIPlus
                     new AcceptableValueRange<int>(0, 3)));
             LightweightMode = Config.Bind("Performance", "**Lightweight Mode**", false,
                 "If you enable this it cull most objects except the emissive ones during voxelization and runs *way* faster, at the cost of light leakage. Can be combined with any quality setting.");
-            AdaptivePerformance = Config.Bind("Performance", "Adaptive Performance", true,
+            AdaptivePerformance = Config.Bind("Performance", "Adaptive Performance", false,
                 "Automatically adjusts settings to maintain framerate");
             TargetFramerate = Config.Bind("Performance", "Target Framerate", 60,
                 new ConfigDescription("he system will try to adjust SEGI Plus to stay around this framerate",

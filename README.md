@@ -44,7 +44,7 @@ Built upon the work of:
 >### Version 1.2.0:
 > - Added first pass of adaptive framerate control that works with the quality setting to try and improve performance
 > - This can be used at any quality setting and with or without lightweight mode
-> - This is automatically enabled with a target framerate of 60 - you can disable this or change the target framerate in the F11 menu
+> - This isn't automatically enabled as it's yet experimental - you can enable this in settings
 
 >### Version 1.1.1
 > - Improved lightweight mode cleanup
