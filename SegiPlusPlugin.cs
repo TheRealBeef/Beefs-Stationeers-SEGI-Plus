@@ -48,6 +48,7 @@ namespace BeefsSEGIPlus
         public static ConfigEntry<bool> LightweightMode;
         public static ConfigEntry<int> TargetFramerate;
         public static ConfigEntry<bool> AdaptivePerformance;
+        public static ConfigEntry<int> AdaptiveStrategy;
         public static ConfigEntry<bool> UseGainMultiplier;
 
 
@@ -197,6 +198,9 @@ namespace BeefsSEGIPlus
                 "If you enable this it cull most objects except the emissive ones during voxelization and runs *way* faster, at the cost of light leakage. Can be combined with any quality setting.");
             AdaptivePerformance = Config.Bind("Performance", "Adaptive Performance", false,
                 "Automatically adjusts settings to maintain framerate");
+            AdaptiveStrategy = Config.Bind("Performance", "Adaptive Strategy", 0,
+                new ConfigDescription("Adaptive Strategy (0=Balanced, 1=Reduce distance first, 2=Reduce quality first, 3= Skip frames first)",
+                    new AcceptableValueRange<int>(0, 3)));
             TargetFramerate = Config.Bind("Performance", "Target Framerate", 60,
                 new ConfigDescription("The system will try to adjust SEGI Plus to stay around this framerate",
                     new AcceptableValueRange<int>(15, 240)));
@@ -413,7 +417,7 @@ namespace BeefsSEGIPlus
         public static float ConeLength => ConeLengths[CurrentQualityLevel];
         public static float ConeWidth => ConeWidths[CurrentQualityLevel];
         public static float ConeTraceBias => 0.65f;
-        public static float TemporalBlendWeight => 0.1f;
+        public static float TemporalBlendWeight => 0.01f;
         public static float GIGain
         {
             get
@@ -481,7 +485,7 @@ namespace BeefsSEGIPlus
                 return VoxelSpaceSizes[quality] * 0.5f; // Start at 50% of max
             }
         }
-
+        public static int AdaptiveStrategy => SEGIPlugin.AdaptiveStrategy?.Value ?? 0;
         public static bool AdaptivePerformance => SEGIPlugin.AdaptivePerformance?.Value ?? false;
         public static float AdaptiveScaleDownThreshold => 1.15f;  // Scale down if frame time >this
         public static float AdaptiveScaleUpThreshold => 0.85f;    // Scale up only if frame time <this
@@ -492,15 +496,57 @@ namespace BeefsSEGIPlus
         public static int AdaptiveMinVoxelRes => 64;
         public static int AdaptiveMinCones => 4;
         public static int AdaptiveMinConeTraceSteps => 6;
-        public static float AdaptiveHalfResOnThreshold => 0.65f;   // Turn ON half res below this
-        public static float AdaptiveHalfResOffThreshold => 0.75f;  // Turn OFF half res above this
-        public static float AdaptiveVoxelAAOffThreshold => 0.55f;  // Turn OFF voxel AA below this
-        public static float AdaptiveVoxelAAOnThreshold => 0.65f;   // Turn ON voxel AA above this
-        public static float AdaptiveBilateralOffThreshold => 0.65f; // Turn OFF filtering below this
-        public static float AdaptiveBilateralOnThreshold => 0.75f;  // Turn ON filtering above this
-        public static float AdaptiveVoxelInterval3Threshold => 0.05f; // Use interval=3 below this
-        public static float AdaptiveVoxelInterval2Threshold => 0.15f; // Use interval=2 below this
-        public static float AdaptiveVoxelInterval1Threshold => 0.25f; // Use interval=1 above this
 
+        private static readonly float[] AdaptiveMinVoxelSpaceSizeMultipliers = { 0.5f, 0.3f, 0.7f, 0.5f };
+        public static float GetAdaptiveMinVoxelSpaceSize(int strategy)
+        {
+            return VoxelSpaceSizes[CurrentQualityLevel] * AdaptiveMinVoxelSpaceSizeMultipliers[strategy];
+        }
+
+        private static readonly float[] AdaptiveVoxelSpaceScaleThresholds = { 0.9f, 1.0f, 0.35f, 0.7f };
+        private static readonly float[] AdaptiveVoxelSpaceScaleRanges = { 0.75f, 0.6f, 0.25f, 0.4f };
+        public static float GetAdaptiveVoxelSpaceScaleThreshold(int strategy) => AdaptiveVoxelSpaceScaleThresholds[strategy];
+        public static float GetAdaptiveVoxelSpaceScaleRange(int strategy) => AdaptiveVoxelSpaceScaleRanges[strategy];
+
+        private static readonly float[] AdaptiveResolutionScaleThresholds = { 0.9f, 0.25f, 0.6f, 0.4f };
+        private static readonly float[] AdaptiveResolutionScaleRanges = { 0.75f, 0.15f, 0.3f, 0.25f };
+        public static float GetAdaptiveResolutionScaleThreshold(int strategy) => AdaptiveResolutionScaleThresholds[strategy];
+        public static float GetAdaptiveResolutionScaleRange(int strategy) => AdaptiveResolutionScaleRanges[strategy];
+
+        private static readonly float[] AdaptiveConesStepsScaleThresholds = { 1.0f, 0.4f, 1.0f, 0.2f };
+        private static readonly float[] AdaptiveConesStepsScaleRanges = { 1.0f, 0.2f, 0.5f, 0.2f };
+        public static float GetAdaptiveConesStepsScaleThreshold(int strategy) => AdaptiveConesStepsScaleThresholds[strategy];
+        public static float GetAdaptiveConesStepsScaleRange(int strategy) => AdaptiveConesStepsScaleRanges[strategy];
+
+        // public static float AdaptiveHalfResOnThreshold => 0.65f;   // Turn ON half res below this
+        // public static float AdaptiveHalfResOffThreshold => 0.75f;  // Turn OFF half res above this
+        private static readonly float[] AdaptiveHalfResOnThresholds = { 0.65f, 0.20f, 0.50f, 0.30f };
+        private static readonly float[] AdaptiveHalfResOffThresholds = { 0.75f, 0.25f, 0.55f, 0.35f };
+        public static float GetAdaptiveHalfResOnThreshold(int strategy) => AdaptiveHalfResOnThresholds[strategy];
+        public static float GetAdaptiveHalfResOffThreshold(int strategy) => AdaptiveHalfResOffThresholds[strategy];
+
+        // public static float AdaptiveVoxelAAOffThreshold => 0.55f;  // Turn OFF voxel AA below this
+        // public static float AdaptiveVoxelAAOnThreshold => 0.65f;   // Turn ON voxel AA above this
+        private static readonly float[] AdaptiveVoxelAAOffThresholds = { 0.55f, 0.30f, 0.60f, 0.20f };
+        private static readonly float[] AdaptiveVoxelAAOnThresholds = { 0.65f, 0.40f, 0.70f, 0.30f };
+        public static float GetAdaptiveVoxelAAOffThreshold(int strategy) => AdaptiveVoxelAAOffThresholds[strategy];
+        public static float GetAdaptiveVoxelAAOnThreshold(int strategy) => AdaptiveVoxelAAOnThresholds[strategy];
+
+        // public static float AdaptiveBilateralOffThreshold => 0.65f; // Turn OFF filtering below this
+        // public static float AdaptiveBilateralOnThreshold => 0.75f;  // Turn ON filtering above this
+        private static readonly float[] AdaptiveBilateralOffThresholds = { 0.65f, 0.30f, 0.60f, 0.20f };
+        private static readonly float[] AdaptiveBilateralOnThresholds = { 0.75f, 0.40f, 0.70f, 0.30f };
+        public static float GetAdaptiveBilateralOffThreshold(int strategy) => AdaptiveBilateralOffThresholds[strategy];
+        public static float GetAdaptiveBilateralOnThreshold(int strategy) => AdaptiveBilateralOnThresholds[strategy];
+
+        // public static float AdaptiveVoxelInterval3Threshold => 0.05f; // Use interval=3 below this
+        // public static float AdaptiveVoxelInterval2Threshold => 0.15f; // Use interval=2 below this
+        // public static float AdaptiveVoxelInterval1Threshold => 0.25f; // Use interval=1 above this
+        private static readonly float[] AdaptiveVoxelInterval3Thresholds = { 0.05f, 0.15f, 0.15f, 0.70f };
+        private static readonly float[] AdaptiveVoxelInterval2Thresholds = { 0.15f, 0.20f, 0.20f, 0.85f };
+        private static readonly float[] AdaptiveVoxelInterval1Thresholds = { 0.25f, 0.30f, 0.30f, 0.95f };
+        public static float GetAdaptiveVoxelInterval3Threshold(int strategy) => AdaptiveVoxelInterval3Thresholds[strategy];
+        public static float GetAdaptiveVoxelInterval2Threshold(int strategy) => AdaptiveVoxelInterval2Thresholds[strategy];
+        public static float GetAdaptiveVoxelInterval1Threshold(int strategy) => AdaptiveVoxelInterval1Thresholds[strategy];
     }
 }

@@ -16,6 +16,7 @@ A modified version of SEGI (Sonic Ether Global Illumination) for Stationeers wit
 - Automatic day/night ambient lighting that adjusts based on sun position
 - Modified SEGI shaders to work properly with Stationeers rendering
 - In-game configuration menu (Press F11 while in-game)
+- In addition to lightweight mode, has an adaptive performance mode with strategy and target framerate options
 
 ## Requirements
 
@@ -40,6 +41,12 @@ Built upon the work of:
 - **Vinus** (previous implementation): [https://github.com/TerameTechYT/StationeersSharp/tree/development/Source/SEGIMod](https://github.com/TerameTechYT/StationeersSharp/tree/development/Source/SEGIMod)
 
 ## Changelog
+
+>### Version 1.2.2:
+> - Shrunk F11 menu slightly
+> - Added color backgrounds to each section to improve understanding of grouping as it's getting crowded
+> - Added Adaptive Strategy option to adjust what's prioritized in adaptive performance mode
+> - Added long-term accumulator for adaptive to bump quality up slightly when framerate stays stable but slightly below target
 
 >### Version 1.2.1:
 > - Widened adaptive framerate slider choices

@@ -2,7 +2,7 @@
 <ModMetadata xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
     <Name>Beef's SEGI Plus</Name>
     <Author>TheRealBeef</Author>
-    <Version>1.2.1</Version>
+    <Version>1.2.2</Version>
 
     <Description>
         [h1]Beef's SEGI Plus[/h1]
@@ -30,6 +30,12 @@
     </Description>
 
     <ChangeLog>
+        1.2.2:
+        - Shrunk F11 menu slightly
+        - Added color backgrounds to each section to improve understanding of grouping as it's getting crowded
+        - Added Adaptive Strategy option to adjust what's prioritized in adaptive performance mode
+        - Added long-term accumulator for adaptive to bump quality up slightly when framerate stays stable but slightly below target
+
         1.2.1:
         - Widened adaptive framerate slider choices
         - Automatically remove/mark read the major update popup if go into world

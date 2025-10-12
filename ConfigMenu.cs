@@ -11,6 +11,11 @@ public class ConfigMenu : MonoBehaviour
     private int _lastScreenHeight = 0;
     private int _lastScreenWidth = 0;
     private float _guiScale = 1.0f;
+    private GUIStyle _orangeBoxStyle;
+    private GUIStyle _blueBoxStyle;
+    private GUIStyle _redBoxStyle;
+    private GUIStyle _greenBoxStyle;
+    private bool _stylesInitialized = false;
 
     private void Update()
     {
@@ -60,6 +65,9 @@ public class ConfigMenu : MonoBehaviour
             if (!_windowRectInitialized)
                 InitializeWindowRect();
 
+            if (!_stylesInitialized)
+                InitializeStyles();
+
             Matrix4x4 oldMatrix = GUI.matrix;
             GUI.matrix = Matrix4x4.Scale(new Vector3(_guiScale, _guiScale, 1.0f));
 
@@ -107,7 +115,7 @@ public class ConfigMenu : MonoBehaviour
         if (_windowRectInitialized) return;
         float screenHeight = Screen.height;
         float screenWidth = Screen.width;
-        float baseHeight = 1080f;
+        float baseHeight = 1440f;
         float baseWindowHeight = 950f;
         float baseWindowWidth = 650f;
         _guiScale = Mathf.Max(1.0f, screenHeight / baseHeight);
@@ -139,16 +147,16 @@ public class ConfigMenu : MonoBehaviour
 
         if (SEGIPlugin.Enabled.Value)
         {
-            GUILayout.Space(10);
+            GUILayout.BeginVertical(_orangeBoxStyle);
             GUILayout.Label("=== Quality Level ===", GUI.skin.box, GUILayout.ExpandWidth(true));
-
             GUILayout.Label($"Quality Level: {SEGIPlugin.QualityLevel.Value} ({ConfigData.GetQualityName()})");
             var newQualityLevel = Mathf.RoundToInt(GUILayout.HorizontalSlider(SEGIPlugin.QualityLevel.Value, 0, 3));
             if (newQualityLevel != SEGIPlugin.QualityLevel.Value) SEGIPlugin.QualityLevel.Value = newQualityLevel;
+            GUILayout.EndVertical();
 
-            GUILayout.Label(ConfigData.GetQualityName(), GUI.skin.box, GUILayout.ExpandWidth(true));
+            GUILayout.Space(3);
 
-            GUILayout.Space(10);
+            GUILayout.BeginVertical(_blueBoxStyle);
             GUILayout.Label("=== Day/Night Cycle ===", GUI.skin.box, GUILayout.ExpandWidth(true));
             GUILayout.Label($"Day Ambient Brightness: {SEGIPlugin.DayAmbientBrightness.Value:F3}");
             var newDayBrightness = GUILayout.HorizontalSlider(SEGIPlugin.DayAmbientBrightness.Value, 0.001f, 0.25f);
@@ -161,15 +169,16 @@ public class ConfigMenu : MonoBehaviour
             if (!Mathf.Approximately(newNightBrightness, SEGIPlugin.NightAmbientBrightness.Value))
                 SEGIPlugin.NightAmbientBrightness.Value = newNightBrightness;
             GUILayout.TextArea("Controls ambient lighting at night (sun below horizon). Keep low for realistic darkness.\nHigher values make shadowed areas brighter.", GUI.skin.box);
+            GUILayout.EndVertical();
 
-            GUILayout.Space(10);
+            GUILayout.Space(3);
+
+            GUILayout.BeginVertical(_redBoxStyle);
             GUILayout.Label("=== Performance ===", GUI.skin.box, GUILayout.ExpandWidth(true));
-
             var currentLightweight = SEGIPlugin.LightweightMode.Value;
             var newLightweight = GUILayout.Toggle(currentLightweight, $"**Lightweight Mode** ({currentLightweight})");
             if (newLightweight != currentLightweight) SEGIPlugin.LightweightMode.Value = newLightweight;
-            GUILayout.TextArea("Only renders emissive objects during voxelization.\nRuns much faster but causes light leakage.\nYou Probably will want to lower the main GI Gain with this enabled", GUI.skin.box);
-
+            GUILayout.TextArea("Only renders emissive objects during voxelization. Faster but causes light leakage.\nYou probably will want to lower the main GI Gain with this enabled", GUI.skin.box);
 
             GUILayout.Space(10);
             GUILayout.Label("=== Adaptive Performance ===", GUI.skin.box, GUILayout.ExpandWidth(true));
@@ -178,7 +187,6 @@ public class ConfigMenu : MonoBehaviour
             var newAdaptive = GUILayout.Toggle(currentAdaptive, $"Enable Adaptive Performance ({currentAdaptive})");
             if (newAdaptive != currentAdaptive) SEGIPlugin.AdaptivePerformance.Value = newAdaptive;
             GUILayout.TextArea("Automatically adjusts settings to maintain framerate", GUI.skin.box);
-
             if (SEGIPlugin.AdaptivePerformance.Value)
             {
                 GUILayout.Space(5);
@@ -186,40 +194,45 @@ public class ConfigMenu : MonoBehaviour
                 var newTargetFPS = Mathf.RoundToInt(GUILayout.HorizontalSlider(SEGIPlugin.TargetFramerate.Value, 15, 240));
                 if (newTargetFPS != SEGIPlugin.TargetFramerate.Value) SEGIPlugin.TargetFramerate.Value = newTargetFPS;
                 GUILayout.TextArea("The system will try to adjust SEGI Plus to stay around this framerate", GUI.skin.box);
+
+                GUILayout.Space(5);
+                GUILayout.Label($"Adaptive Strategy: {SEGIPlugin.AdaptiveStrategy.Value} ({GetStratName(SEGIPlugin.AdaptiveStrategy.Value)})");
+                var newStrategy = Mathf.RoundToInt(GUILayout.HorizontalSlider(SEGIPlugin.AdaptiveStrategy.Value, 0, 3));
+                if (newStrategy != SEGIPlugin.AdaptiveStrategy.Value) SEGIPlugin.AdaptiveStrategy.Value = newStrategy;
+                GUILayout.TextArea(GetStratDescription(SEGIPlugin.AdaptiveStrategy.Value), GUI.skin.box);
             }
+            GUILayout.EndVertical();
 
-            GUILayout.Space(10);
+            GUILayout.Space(3);
+
+            GUILayout.BeginVertical(_greenBoxStyle);
             GUILayout.Label("=== Gain Controls ===", GUI.skin.box, GUILayout.ExpandWidth(true));
-
             float giMultiplier = SEGIPlugin.UseGainMultiplier.Value ? 10f : 1f;
-
             GUILayout.Label($"Global Illumination Gain: {SEGIPlugin.GIGain.Value:F2}" +
                             (SEGIPlugin.UseGainMultiplier.Value ? $" (Applied: {SEGIPlugin.GIGain.Value * giMultiplier:F2})" : ""));
             var newGiGain = GUILayout.HorizontalSlider(SEGIPlugin.GIGain.Value, 0.0f, 8.0f);
             if (!Mathf.Approximately(newGiGain, SEGIPlugin.GIGain.Value)) SEGIPlugin.GIGain.Value = newGiGain;
             GUILayout.TextArea("Master brightness control for all global illumination effects.\nIncrease if lighting seems too dim.", GUI.skin.box);
-
             GUILayout.Label($"Near Light Gain: {SEGIPlugin.NearLightGain.Value:F2}" +
                             (SEGIPlugin.UseGainMultiplier.Value ? $" (Applied: {SEGIPlugin.NearLightGain.Value * giMultiplier:F2})" : ""));
             var newNearLightGain = GUILayout.HorizontalSlider(SEGIPlugin.NearLightGain.Value, 0.0f, 2.0f);
             if (!Mathf.Approximately(newNearLightGain, SEGIPlugin.NearLightGain.Value))
                 SEGIPlugin.NearLightGain.Value = newNearLightGain;
             GUILayout.TextArea("Brightens lighting effects close to the camera.\nUseful for interior lighting.", GUI.skin.box);
-
             GUILayout.Label($"Secondary Bounce Gain: {SEGIPlugin.SecondaryBounceGain.Value:F2}" +
                             (SEGIPlugin.UseGainMultiplier.Value ? $" (Applied: {SEGIPlugin.SecondaryBounceGain.Value * giMultiplier:F2})" : ""));
             var newSecondaryBounce = GUILayout.HorizontalSlider(SEGIPlugin.SecondaryBounceGain.Value, 0.0f, 2.0f);
             if (!Mathf.Approximately(newSecondaryBounce, SEGIPlugin.SecondaryBounceGain.Value))
                 SEGIPlugin.SecondaryBounceGain.Value = newSecondaryBounce;
             GUILayout.TextArea("Controls secondary light bounces. Higher values = more light bouncing.\nIt adds more light in total so interacts with the day/night ambient brightness settings", GUI.skin.box);
-
             GUILayout.Space(10);
-
             var currentMultiplier = SEGIPlugin.UseGainMultiplier.Value;
             var newMultiplier = GUILayout.Toggle(currentMultiplier, $"x10 Gain Multiplier ({currentMultiplier})");
             if (newMultiplier != currentMultiplier) SEGIPlugin.UseGainMultiplier.Value = newMultiplier;
+            GUILayout.EndVertical();
 
             GUILayout.Space(10);
+
             GUILayout.Label("Press F11 to toggle this menu", GUILayout.ExpandWidth(true));
             GUILayout.Label("All changes are saved automatically", GUILayout.ExpandWidth(true));
         }
@@ -237,5 +250,63 @@ public class ConfigMenu : MonoBehaviour
             Cursor.lockState = CursorLockMode.Locked;
             Cursor.visible = false;
         }
+    }
+
+    private void InitializeStyles()
+    {
+        if (_stylesInitialized) return;
+
+        _orangeBoxStyle = MakeStyle(new Color(0.65f, 0.27f, 0f, 0.8f), Color.white);
+        _blueBoxStyle = MakeStyle(new Color(0f, 0.18f, 0.6f, 0.8f), Color.white);
+        _redBoxStyle = MakeStyle(new Color(0.55f, 0.01f, 0f, 0.8f), Color.white);
+        _greenBoxStyle = MakeStyle(new Color(0f, 0.5f, 0.05f, 0.8f), Color.white);
+
+        _stylesInitialized = true;
+    }
+
+    private GUIStyle MakeStyle(Color backgroundColor, Color textColor)
+    {
+        var style = new GUIStyle(GUI.skin.box);
+        style.normal.background = WhyDoIhaveToCreateADamnTextureForThisToWorkGuh(backgroundColor);
+        style.normal.textColor = textColor;
+        style.fontStyle = FontStyle.Bold;
+        style.alignment = TextAnchor.MiddleCenter;
+        return style;
+    }
+
+    private Texture2D WhyDoIhaveToCreateADamnTextureForThisToWorkGuh(Color color)
+    {
+        Color[] pixels = new Color[4];
+        for (int i = 0; i < pixels.Length; i++)
+            pixels[i] = color;
+
+        Texture2D texture = new Texture2D(2, 2);
+        texture.SetPixels(pixels);
+        texture.Apply();
+        return texture;
+    }
+
+    private string GetStratName(int strategy)
+    {
+        return strategy switch
+        {
+            0 => "Balanced",
+            1 => "Reduce Distance First",
+            2 => "Reduce Quality First",
+            3 => "Skip Frames First",
+            _ => "Unknown"
+        };
+    }
+
+    private string GetStratDescription(int strategy)
+    {
+        return strategy switch
+        {
+            0 => "Balanced: Scales all settings proportionally as in experimental",
+            1 => "Reduce Distance First: Keeps quality and reduces distance of global illumination first",
+            2 => "Reduce Quality First: Keeps distance and reduces quality of global illumination first",
+            3 => "Skip Frames First: Keeps quality and distance and skips frames first, but causes stuttering",
+            _ => "Unknown"
+        };
     }
 }

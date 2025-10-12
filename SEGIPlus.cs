@@ -36,9 +36,13 @@ public class SEGIStationeers : MonoBehaviour
     private float _currentAmbientBrightness;
 
     private float TargetFrameTime => 1.0f / ConfigData.TargetFramerate;
-    private float currentAdaptiveScale = 0.05f;
+    private float currentAdaptiveScale = 1.0f;
     private Queue<float> frameTimeHistory = new Queue<float>();
     private float frameTimeAverage = 0.016f;
+    private float adaptiveLongTermAcc = 0f;
+    private float adaptiveLongTermTimer = 0f;
+    private const float AdaptiveLongTermInterval = 5.0f;
+    private const float AdaptiveLongTermThreshold = 0.95f;
     private int adaptiveVoxelResolution;
     private float adaptiveVoxelSpaceSize;
     private float adaptiveShadowSpaceSize;
@@ -1320,7 +1324,7 @@ public class SEGIStationeers : MonoBehaviour
         }
     }
 
-        private void UpdateFrameData()
+    private void UpdateFrameData()
     {
         float currentFrameTime = Time.unscaledDeltaTime;
         if (frameTimeHistory.Count >= 30) //30frame avg
@@ -1337,6 +1341,10 @@ public class SEGIStationeers : MonoBehaviour
                 sum += time;
             frameTimeAverage = sum / frameTimeHistory.Count;
         }
+        adaptiveLongTermTimer += Time.unscaledDeltaTime;
+        float targetFrameTime = TargetFrameTime;
+        float frameTimeRatio = frameTimeAverage / targetFrameTime;
+        adaptiveLongTermAcc += frameTimeRatio;
     }
 
     private void UpdateAdaptivePerformance()
@@ -1352,6 +1360,8 @@ public class SEGIStationeers : MonoBehaviour
             adaptiveVoxelAA = ConfigData.VoxelAntiAliasing;
             adaptiveBilateralFiltering = ConfigData.UseBilateralFiltering;
             adaptiveVoxelizationInterval = 1;
+            adaptiveLongTermAcc = 0f;
+            adaptiveLongTermTimer = 0f;
             return;
         }
 
@@ -1369,40 +1379,67 @@ public class SEGIStationeers : MonoBehaviour
         {
             scaleDelta = (scaleUpThreshold - frameTimeRatio) * ConfigData.AdaptiveRate;
         }
-
-        currentAdaptiveScale = Mathf.Clamp(
-            currentAdaptiveScale + scaleDelta,
-            0.125f,
-            1.0f
-        );
-
-        float targetVoxelSpaceSize;
-        int targetRes;
-        float minVoxelSpaceSize = ConfigData.AdaptiveMinVoxelSpaceSize;
-
-        if (currentAdaptiveScale < 0.9f)
+        else if (adaptiveLongTermTimer >= AdaptiveLongTermInterval)
         {
-            float resScale = (currentAdaptiveScale - 0.15f) / (0.9f - 0.15f);
+            float samples = adaptiveLongTermTimer / (frameTimeAverage > 0 ? frameTimeAverage : 0.016f);
+            float longTermAverage = samples > 0 ? adaptiveLongTermAcc / samples : 1.0f;
+            if (longTermAverage <= AdaptiveLongTermThreshold && currentAdaptiveScale < 1.0f)
+            {
+                scaleDelta = 0.05f;
+            }
 
+            adaptiveLongTermAcc = 0f;
+            adaptiveLongTermTimer = 0f;
+        }
+
+        currentAdaptiveScale = Mathf.Clamp(currentAdaptiveScale + scaleDelta, 0.125f, 1.0f);
+
+        int adaptiveStrategy = ConfigData.AdaptiveStrategy;
+
+        float voxelSpaceScaleThreshold = ConfigData.GetAdaptiveVoxelSpaceScaleThreshold(adaptiveStrategy);
+        float voxelSpaceScaleRange = ConfigData.GetAdaptiveVoxelSpaceScaleRange(adaptiveStrategy);
+        float voxelSpaceScale = Mathf.Clamp01((currentAdaptiveScale - (voxelSpaceScaleThreshold - voxelSpaceScaleRange)) / voxelSpaceScaleRange);
+
+        float minVoxelSpaceSize = ConfigData.GetAdaptiveMinVoxelSpaceSize(adaptiveStrategy);
+        float targetVoxelSpaceSize;
+
+        if (currentAdaptiveScale < voxelSpaceScaleThreshold)
+        {
+            targetVoxelSpaceSize = Mathf.Lerp(minVoxelSpaceSize, adaptiveMaxVoxelSpaceSize, voxelSpaceScale);
+        }
+        else
+        {
+            targetVoxelSpaceSize = adaptiveMaxVoxelSpaceSize;
+        }
+
+        if (Mathf.Abs(targetVoxelSpaceSize - adaptiveVoxelSpaceSize) >= 1.0f)
+        {
+            adaptiveVoxelSpaceSize = targetVoxelSpaceSize;
+            adaptiveShadowSpaceSize = targetVoxelSpaceSize * 0.75f;
+        }
+
+        float resolutionScaleThreshold = ConfigData.GetAdaptiveResolutionScaleThreshold(adaptiveStrategy);
+        float resolutionScaleRange = ConfigData.GetAdaptiveResolutionScaleRange(adaptiveStrategy);
+        float resolutionScale = Mathf.Clamp01((currentAdaptiveScale - (resolutionScaleThreshold - resolutionScaleRange)) / resolutionScaleRange);
+
+        int targetRes;
+        if (currentAdaptiveScale < resolutionScaleThreshold)
+        {
             float minRatio = minVoxelSpaceSize / adaptiveMaxVoxelSpaceSize;
 
-            if (resScale > minRatio)
+            if (resolutionScale > minRatio)
             {
-                targetVoxelSpaceSize = Mathf.Lerp(minVoxelSpaceSize, adaptiveMaxVoxelSpaceSize,
-                    (resScale - minRatio) / (1.0f - minRatio));
                 targetRes = adaptiveMaxVoxelRes;
             }
             else
             {
-                targetVoxelSpaceSize = minVoxelSpaceSize;
-                float moreAggressivelyAdaptiveAdaptive = resScale / minRatio;
-                targetRes = Mathf.RoundToInt(Mathf.Lerp(ConfigData.AdaptiveMinVoxelRes, adaptiveMaxVoxelRes, moreAggressivelyAdaptiveAdaptive));
+                float adjustedResScale = resolutionScale / minRatio;
+                targetRes = Mathf.RoundToInt(Mathf.Lerp(ConfigData.AdaptiveMinVoxelRes, adaptiveMaxVoxelRes, adjustedResScale));
             }
             targetRes = Mathf.Max(ConfigData.AdaptiveMinVoxelRes, (targetRes / 32) * 32);
         }
         else
         {
-            targetVoxelSpaceSize = adaptiveMaxVoxelSpaceSize;
             targetRes = adaptiveMaxVoxelRes;
         }
 
@@ -1412,20 +1449,17 @@ public class SEGIStationeers : MonoBehaviour
             adaptiveVoxelResolution = newVoxelRes;
         }
 
-        if (Mathf.Abs(targetVoxelSpaceSize - adaptiveVoxelSpaceSize) >= 1.0f)
-        {
-            adaptiveVoxelSpaceSize = targetVoxelSpaceSize;
-            adaptiveShadowSpaceSize = targetVoxelSpaceSize * 0.75f;
-        }
+        float conesStepsScaleThreshold = ConfigData.GetAdaptiveConesStepsScaleThreshold(adaptiveStrategy);
+        float conesStepsScaleRange = ConfigData.GetAdaptiveConesStepsScaleRange(adaptiveStrategy);
+        float conesStepsScale = Mathf.Clamp01((currentAdaptiveScale - (conesStepsScaleThreshold - conesStepsScaleRange)) / conesStepsScaleRange);
 
         adaptiveCones = Mathf.Min(adaptiveMaxCones,
             Mathf.Max(ConfigData.AdaptiveMinCones,
-                Mathf.RoundToInt(Mathf.Lerp(ConfigData.AdaptiveMinCones, adaptiveMaxCones, currentAdaptiveScale))));
+                Mathf.RoundToInt(Mathf.Lerp(ConfigData.AdaptiveMinCones, adaptiveMaxCones, conesStepsScale))));
 
         adaptiveConeTraceSteps = Mathf.Min(adaptiveMaxConeTraceSteps,
             Mathf.Max(ConfigData.AdaptiveMinConeTraceSteps,
-                Mathf.RoundToInt(Mathf.Lerp(ConfigData.AdaptiveMinConeTraceSteps, adaptiveMaxConeTraceSteps, currentAdaptiveScale))));
-
+                Mathf.RoundToInt(Mathf.Lerp(ConfigData.AdaptiveMinConeTraceSteps, adaptiveMaxConeTraceSteps, conesStepsScale))));
 
         if (currentAdaptiveScale >= 0.9f)
         {
@@ -1435,27 +1469,40 @@ public class SEGIStationeers : MonoBehaviour
         }
         else
         {
-            if (currentAdaptiveScale < ConfigData.AdaptiveHalfResOnThreshold)
+            float halfResOnThreshold = ConfigData.GetAdaptiveHalfResOnThreshold(adaptiveStrategy);
+            float halfResOffThreshold = ConfigData.GetAdaptiveHalfResOffThreshold(adaptiveStrategy);
+
+            if (currentAdaptiveScale < halfResOnThreshold)
                 adaptiveHalfResolution = true;
-            else if (currentAdaptiveScale >= ConfigData.AdaptiveHalfResOffThreshold)
+            else if (currentAdaptiveScale >= halfResOffThreshold)
                 adaptiveHalfResolution = ConfigData.AdaptiveMaxHalfResolution;
 
-            if (currentAdaptiveScale < ConfigData.AdaptiveVoxelAAOffThreshold)
+            float voxelAAOffThreshold = ConfigData.GetAdaptiveVoxelAAOffThreshold(adaptiveStrategy);
+            float voxelAAOnThreshold = ConfigData.GetAdaptiveVoxelAAOnThreshold(adaptiveStrategy);
+
+            if (currentAdaptiveScale < voxelAAOffThreshold)
                 adaptiveVoxelAA = false;
-            else if (currentAdaptiveScale >= ConfigData.AdaptiveVoxelAAOnThreshold)
+            else if (currentAdaptiveScale >= voxelAAOnThreshold)
                 adaptiveVoxelAA = ConfigData.AdaptiveMaxVoxelAA;
 
-            if (currentAdaptiveScale < ConfigData.AdaptiveBilateralOffThreshold)
+            float bilateralOffThreshold = ConfigData.GetAdaptiveBilateralOffThreshold(adaptiveStrategy);
+            float bilateralOnThreshold = ConfigData.GetAdaptiveBilateralOnThreshold(adaptiveStrategy);
+
+            if (currentAdaptiveScale < bilateralOffThreshold)
                 adaptiveBilateralFiltering = false;
-            else if (currentAdaptiveScale >= ConfigData.AdaptiveBilateralOnThreshold)
+            else if (currentAdaptiveScale >= bilateralOnThreshold)
                 adaptiveBilateralFiltering = ConfigData.AdaptiveMaxBilateralFiltering;
         }
 
-        if (currentAdaptiveScale < ConfigData.AdaptiveVoxelInterval3Threshold)
+        float interval3Threshold = ConfigData.GetAdaptiveVoxelInterval3Threshold(adaptiveStrategy);
+        float interval2Threshold = ConfigData.GetAdaptiveVoxelInterval2Threshold(adaptiveStrategy);
+        float interval1Threshold = ConfigData.GetAdaptiveVoxelInterval1Threshold(adaptiveStrategy);
+
+        if (currentAdaptiveScale < interval3Threshold)
             adaptiveVoxelizationInterval = 3;
-        else if (currentAdaptiveScale < ConfigData.AdaptiveVoxelInterval2Threshold)
+        else if (currentAdaptiveScale < interval2Threshold)
             adaptiveVoxelizationInterval = 2;
-        else if (currentAdaptiveScale > ConfigData.AdaptiveVoxelInterval1Threshold)
+        else if (currentAdaptiveScale > interval1Threshold)
             adaptiveVoxelizationInterval = 1;
 
         // float currentFPS = 1.0f / frameTimeAverage;
