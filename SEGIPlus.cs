@@ -35,7 +35,8 @@ public class SEGIStationeers : MonoBehaviour
     private float shadowSpaceDepthRatio = 10.0f;
     private float _currentAmbientBrightness;
 
-    private float TargetFrameTime => 1.0f / ConfigData.TargetFramerate;
+    // private float TargetFrameTime => 1.0f / ConfigData.TargetFramerate;
+    private float TargetFrameTime => effectiveTargetFrameTime;
     private float currentAdaptiveScale = 1.0f;
     private Queue<float> frameTimeHistory = new Queue<float>();
     private float frameTimeAverage = 0.016f;
@@ -59,6 +60,12 @@ public class SEGIStationeers : MonoBehaviour
     private bool adaptiveSkipVoxelization;
     private int adaptiveVoxelizationInterval = 1;
     private int adaptiveVoxelizationFrameCounter = 0;
+    private float performanceMarginMultiplier = 1.0f;
+    private float effectiveTargetFrameTime;
+    private bool isFrameCapped = false;
+    private int cachedFrameCap = -1;
+    private float lastFrameCapCheck = 0f;
+    private const float FrameCapCheckInterval = 1.0f;
 
     private static readonly string ModDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
     private static AssetBundle _bundle;
@@ -281,6 +288,7 @@ public class SEGIStationeers : MonoBehaviour
 
         if (ConfigData.AdaptivePerformance)
         {
+            UpdateFrameCapStatus();
             UpdateFrameData();
             UpdateAdaptivePerformance();
             if (volumeTextures != null && volumeTextures[0].width != adaptiveVoxelResolution)
@@ -303,6 +311,12 @@ public class SEGIStationeers : MonoBehaviour
         if (notReadyToRender) return;
 
         if (!updateGI) return;
+
+        if (volumeTextures == null || volumeTextures.Length == 0 || volumeTextures[0] == null)
+        {
+            SEGIPlugin.Log.LogWarning("Volume textures not ready");
+            return;
+        }
 
         var previousActive = RenderTexture.active;
 
@@ -473,25 +487,25 @@ public class SEGIStationeers : MonoBehaviour
                 if (emissiveRenderersToUse.Count == 0) return;
                 const int tempLayer = 31;
                 _layerRestoreCache.Clear();
-                foreach (var r in emissiveRenderersToUse)
-                {
-                    if (r != null && r.gameObject.layer != tempLayer)
+                    foreach (var r in emissiveRenderersToUse)
                     {
+                    if (r != null && r.gameObject.layer != tempLayer)
+                        {
                         _layerRestoreCache[r.gameObject] = r.gameObject.layer;
-                        r.gameObject.layer = tempLayer;
-                    }
-                }
-                var originalMask = voxelCamera.cullingMask;
-                voxelCamera.cullingMask = 1 << tempLayer;
-                voxelCamera.allowHDR = true;
-                voxelCamera.RenderWithShader(voxelizationShader, "");
-                voxelCamera.cullingMask = originalMask;
+                                r.gameObject.layer = tempLayer;
+                            }
+                        }
+                    var originalMask = voxelCamera.cullingMask;
+                    voxelCamera.cullingMask = 1 << tempLayer;
+                    voxelCamera.allowHDR = true;
+                    voxelCamera.RenderWithShader(voxelizationShader, "");
+                    voxelCamera.cullingMask = originalMask;
                 foreach (var kvp in _layerRestoreCache)
-                {
+                    {
                     if (kvp.Key != null)
-                        kvp.Key.layer = kvp.Value;
-                }
-                Graphics.ClearRandomWriteTargets();
+                                kvp.Key.layer = kvp.Value;
+                        }
+                    Graphics.ClearRandomWriteTargets();
             }
             else
             {
@@ -793,6 +807,7 @@ public class SEGIStationeers : MonoBehaviour
         else
         {
             shadowCamera = shadowCameraGameObject.AddComponent<Camera>();
+            shadowCamera.cullingMask = 0;
             shadowCamera.enabled = false;
             shadowCamera.depth = attachedCamera.depth - 1;
             shadowCamera.orthographic = true;
@@ -997,7 +1012,13 @@ public class SEGIStationeers : MonoBehaviour
             for (var j = i; j < endIndex; j++)
             {
                 var r = allRenderers[j];
-                if (IsRendererEmissive(r)) newCache.Add(r);
+                if (r != null && r && r.gameObject != null && r.gameObject.activeInHierarchy)
+                {
+                    if (IsRendererEmissive(r))
+                    {
+                        newCache.Add(r);
+                    }
+                }
             }
 
             if (Time.realtimeSinceStartup * 1000f - frameStartTime > 0.2f)
@@ -1006,8 +1027,15 @@ public class SEGIStationeers : MonoBehaviour
                 frameStartTime = Time.realtimeSinceStartup * 1000f;
             }
         }
-        _cachedEmissiveRenderers.Clear();
-        _cachedEmissiveRenderers.AddRange(newCache);
+        if (newCache.Count > 0)
+        {
+            _cachedEmissiveRenderers = new List<Renderer>(newCache.Count);
+            _cachedEmissiveRenderers.AddRange(newCache);
+        }
+        else
+        {
+            _cachedEmissiveRenderers.Clear();
+        }
         _culledEmissiveRenderers.Clear();
         _lastSpatialCullUpdate = 0f;
         _lastEmissiveCacheUpdate = Time.time;
@@ -1017,23 +1045,35 @@ public class SEGIStationeers : MonoBehaviour
 
     private List<Renderer> GetEmissiveRenderers()
     {
-        if (Time.time - _lastSpatialCullUpdate < SpatialCullUpdateInterval) return _culledEmissiveRenderers;
+        if (Time.time - _lastSpatialCullUpdate < SpatialCullUpdateInterval)
+            return _culledEmissiveRenderers;
+
         _culledEmissiveRenderers.Clear();
-        if (_culledEmissiveRenderers.Capacity < 500)
-            _culledEmissiveRenderers.Capacity = 500;
+
         var halfSize = adaptiveVoxelSpaceSize * 0.75f;
         var voxelMin = voxelSpaceOrigin - Vector3.one * halfSize;
         var voxelMax = voxelSpaceOrigin + Vector3.one * halfSize;
-        for (var i = 0; i < _cachedEmissiveRenderers.Count; i++)
+
+        int deadRefs = 0;
+        for (var i = _cachedEmissiveRenderers.Count - 1; i >= 0; i--)
         {
             var r = _cachedEmissiveRenderers[i];
-            if (r == null) continue;
+            if (r == null || !r)
+            {
+                _cachedEmissiveRenderers.RemoveAt(i);
+                deadRefs++;
+                continue;
+            }
+
             var bounds = r.bounds;
             if (bounds.max.x >= voxelMin.x && bounds.min.x <= voxelMax.x &&
                 bounds.max.y >= voxelMin.y && bounds.min.y <= voxelMax.y &&
                 bounds.max.z >= voxelMin.z && bounds.min.z <= voxelMax.z)
+            {
                 _culledEmissiveRenderers.Add(r);
+            }
         }
+
         _lastSpatialCullUpdate = Time.time;
         return _culledEmissiveRenderers;
     }
@@ -1253,6 +1293,21 @@ public class SEGIStationeers : MonoBehaviour
             StopCoroutine(_emissiveCacheCoroutine);
             _emissiveCacheCoroutine = null;
         }
+        try
+        {
+            Shader.SetGlobalTexture("SEGIVolumeLevel0", null);
+            for (int i = 1; i < mipLevels; i++)
+            {
+                Shader.SetGlobalTexture($"SEGIVolumeLevel{i}", null);
+            }
+            Shader.SetGlobalTexture("SEGIVolumeTexture1", null);
+            Shader.SetGlobalTexture("SEGISunDepth", null);
+            Shader.SetGlobalTexture("PreviousGITexture", null);
+        }
+        catch (Exception ex)
+        {
+            SEGIPlugin.Log.LogError($"Error clearing: {ex.Message}");
+        }
 
         CleanupCaches();
         DestroyImmediate(material);
@@ -1268,10 +1323,17 @@ public class SEGIStationeers : MonoBehaviour
 
     private void CleanupCaches()
     {
+        var deadKeys = new List<GameObject>();
         foreach (var kvp in _layerRestoreCache)
         {
-            if (kvp.Key != null && kvp.Key)
-                kvp.Key.layer = kvp.Value;
+            if (kvp.Key == null || !kvp.Key)
+            {
+                deadKeys.Add(kvp.Key);
+            }
+        }
+        foreach (var key in deadKeys)
+        {
+            _layerRestoreCache.Remove(key);
         }
         _layerRestoreCache.Clear();
         _culledEmissiveRenderers.Clear();
@@ -1365,27 +1427,34 @@ public class SEGIStationeers : MonoBehaviour
             return;
         }
 
-        float scaleDownThreshold = ConfigData.AdaptiveScaleDownThreshold;
-        float scaleUpThreshold = ConfigData.AdaptiveScaleUpThreshold;
+        // float scaleDownThreshold = ConfigData.AdaptiveScaleDownThreshold;
+        // float scaleUpThreshold = ConfigData.AdaptiveScaleUpThreshold;
+
+        float scaleDownThreshold = ConfigData.AdaptiveScaleDownThreshold / performanceMarginMultiplier;
+        float scaleUpThreshold = ConfigData.AdaptiveScaleUpThreshold / performanceMarginMultiplier;
+
         float targetFrameTime = TargetFrameTime;
         float frameTimeRatio = frameTimeAverage / targetFrameTime;
 
         float scaleDelta = 0f;
         if (frameTimeRatio > scaleDownThreshold) // less quality needed
         {
-            scaleDelta = -(frameTimeRatio - scaleDownThreshold) * ConfigData.AdaptiveRate;
+            // scaleDelta = -(frameTimeRatio - scaleDownThreshold) * ConfigData.AdaptiveRate;
+            scaleDelta = -(frameTimeRatio - scaleDownThreshold) * ConfigData.AdaptiveRate * performanceMarginMultiplier;
         }
         else if (frameTimeRatio < scaleUpThreshold) // more quality wanted
         {
-            scaleDelta = (scaleUpThreshold - frameTimeRatio) * ConfigData.AdaptiveRate;
+            // scaleDelta = (scaleUpThreshold - frameTimeRatio) * ConfigData.AdaptiveRate;
+            scaleDelta = (scaleUpThreshold - frameTimeRatio) * ConfigData.AdaptiveRate / performanceMarginMultiplier;
         }
         else if (adaptiveLongTermTimer >= AdaptiveLongTermInterval)
         {
             float samples = adaptiveLongTermTimer / (frameTimeAverage > 0 ? frameTimeAverage : 0.016f);
             float longTermAverage = samples > 0 ? adaptiveLongTermAcc / samples : 1.0f;
-            if (longTermAverage <= AdaptiveLongTermThreshold && currentAdaptiveScale < 1.0f)
+            float longTermThreshold = AdaptiveLongTermThreshold * (isFrameCapped ? 0.95f : 1.0f);
+            if (longTermAverage <= longTermThreshold && currentAdaptiveScale < 1.0f)
             {
-                scaleDelta = 0.05f;
+                scaleDelta = 0.05f / (isFrameCapped ? performanceMarginMultiplier : 1.0f);
             }
 
             adaptiveLongTermAcc = 0f;
@@ -1511,5 +1580,60 @@ public class SEGIStationeers : MonoBehaviour
         //     $"VoxelRes={adaptiveVoxelResolution} Cones={adaptiveCones} Steps={adaptiveConeTraceSteps} " +
         //     $"HalfRes={adaptiveHalfResolution} VoxelAA={adaptiveVoxelAA} Filtering={adaptiveBilateralFiltering} " +
         //     $"Interval={adaptiveVoxelizationInterval}");
+    }
+
+    private int GetGameFrameCap()
+    {
+        if (Time.time - lastFrameCapCheck < FrameCapCheckInterval)
+            return cachedFrameCap;
+
+        lastFrameCapCheck = Time.time;
+
+        try
+        {
+            int targetFrameRate = Application.targetFrameRate;
+            if (targetFrameRate <= 0 || targetFrameRate > 250)
+            {
+                cachedFrameCap = -1;
+            }
+            else if (targetFrameRate == 25)
+            {
+                cachedFrameCap = 25;
+            }
+            else
+            {
+                cachedFrameCap = targetFrameRate - 1;
+            }
+        }
+        catch
+        {
+            cachedFrameCap = -1;
+        }
+
+        return cachedFrameCap;
+    }
+
+    private void UpdateFrameCapStatus()
+    {
+        int frameCap = GetGameFrameCap();
+        float userTarget = ConfigData.TargetFramerate;
+        if (frameCap <= 0)
+        {
+            isFrameCapped = false;
+            performanceMarginMultiplier = 1.0f;
+            effectiveTargetFrameTime = 1.0f / userTarget;
+        }
+        else if (userTarget <= frameCap)
+        {
+            isFrameCapped = false;
+            performanceMarginMultiplier = 1.0f;
+            effectiveTargetFrameTime = 1.0f / userTarget;
+        }
+        else
+        {
+            isFrameCapped = true;
+            performanceMarginMultiplier = userTarget / (float)frameCap;
+            effectiveTargetFrameTime = 1.0f / frameCap;
+        }
     }
 }

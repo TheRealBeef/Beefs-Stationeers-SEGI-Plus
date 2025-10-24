@@ -159,7 +159,7 @@ public class ConfigMenu : MonoBehaviour
             GUILayout.BeginVertical(_blueBoxStyle);
             GUILayout.Label("=== Day/Night Cycle ===", GUI.skin.box, GUILayout.ExpandWidth(true));
             GUILayout.Label($"Day Ambient Brightness: {SEGIPlugin.DayAmbientBrightness.Value:F3}");
-            var newDayBrightness = GUILayout.HorizontalSlider(SEGIPlugin.DayAmbientBrightness.Value, 0.001f, 0.25f);
+            var newDayBrightness = GUILayout.HorizontalSlider(SEGIPlugin.DayAmbientBrightness.Value, 0.000f, 0.25f);
             if (!Mathf.Approximately(newDayBrightness, SEGIPlugin.DayAmbientBrightness.Value))
                 SEGIPlugin.DayAmbientBrightness.Value = newDayBrightness;
             GUILayout.TextArea("Controls how bright ambient lighting is during daytime (sun above horizon).\nHigher values make shadowed areas brighter.", GUI.skin.box);
@@ -197,9 +197,19 @@ public class ConfigMenu : MonoBehaviour
 
                 GUILayout.Space(5);
                 GUILayout.Label($"Adaptive Strategy: {SEGIPlugin.AdaptiveStrategy.Value} ({GetStratName(SEGIPlugin.AdaptiveStrategy.Value)})");
-                var newStrategy = Mathf.RoundToInt(GUILayout.HorizontalSlider(SEGIPlugin.AdaptiveStrategy.Value, 0, 3));
+                var newStrategy = Mathf.RoundToInt(GUILayout.HorizontalSlider(SEGIPlugin.AdaptiveStrategy.Value, 0, 1));
                 if (newStrategy != SEGIPlugin.AdaptiveStrategy.Value) SEGIPlugin.AdaptiveStrategy.Value = newStrategy;
                 GUILayout.TextArea(GetStratDescription(SEGIPlugin.AdaptiveStrategy.Value), GUI.skin.box);
+
+                if (SEGIPlugin.AdaptiveStrategy.Value == 1)
+                {
+                    GUILayout.Space(5);
+                    GUILayout.Label($"Min Distance: {SEGIPlugin.AdaptiveMinDistancePercent.Value:F0}% of max");
+                    var newMinDistPercent = GUILayout.HorizontalSlider(SEGIPlugin.AdaptiveMinDistancePercent.Value, 10f, 100f);
+                    if (!Mathf.Approximately(newMinDistPercent, SEGIPlugin.AdaptiveMinDistancePercent.Value))
+                        SEGIPlugin.AdaptiveMinDistancePercent.Value = newMinDistPercent;
+                    GUILayout.TextArea("What's the minimum distance we can use? Lower % = closer but also faster", GUI.skin.box);
+                }
             }
             GUILayout.EndVertical();
 
@@ -292,8 +302,6 @@ public class ConfigMenu : MonoBehaviour
         {
             0 => "Balanced",
             1 => "Reduce Distance First",
-            2 => "Reduce Quality First",
-            3 => "Skip Frames First",
             _ => "Unknown"
         };
     }
@@ -304,8 +312,6 @@ public class ConfigMenu : MonoBehaviour
         {
             0 => "Balanced: Scales all settings proportionally as in experimental",
             1 => "Reduce Distance First: Keeps quality and reduces distance of global illumination first",
-            2 => "Reduce Quality First: Keeps distance and reduces quality of global illumination first",
-            3 => "Skip Frames First: Keeps quality and distance and skips frames first, but causes stuttering",
             _ => "Unknown"
         };
     }

@@ -2,7 +2,7 @@
 <ModMetadata xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
     <Name>Beef's SEGI Plus</Name>
     <Author>TheRealBeef</Author>
-    <Version>1.2.2</Version>
+    <Version>1.2.3</Version>
 
     <Description>
         [h1]Beef's SEGI Plus[/h1]
@@ -30,6 +30,12 @@
     </Description>
 
     <ChangeLog>
+        1.2.3:
+        - Another pass on adaptive performance
+        - Only two strategies now: Balanced and Reduce Distance first
+        - Added min distance option for reduce distance first
+        - Properly handle when desired framerate is set above in-game framerate limiter
+
         1.2.2:
         - Shrunk F11 menu slightly
         - Added color backgrounds to each section to improve understanding of grouping as it's getting crowded

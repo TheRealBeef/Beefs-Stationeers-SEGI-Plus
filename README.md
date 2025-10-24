@@ -43,6 +43,12 @@ Built upon the work of:
 ## Changelog
 
 >### Version 1.2.2:
+>- Another pass on adaptive performance
+>- Only two strategies now: Balanced and Reduce Distance first
+>- Added min distance option for reduce distance first
+>- Properly handle when desired framerate is set above in-game framerate limiter
+
+>### Version 1.2.2:
 > - Shrunk F11 menu slightly
 > - Added color backgrounds to each section to improve understanding of grouping as it's getting crowded
 > - Added Adaptive Strategy option to adjust what's prioritized in adaptive performance mode
