@@ -64,6 +64,8 @@ public class SEGIStationeers : MonoBehaviour
     private bool adaptiveSkipVoxelization;
     private int adaptiveVoxelizationInterval = 1;
     private int adaptiveVoxelizationFrameCounter = 0;
+    private float _lastResolutionChangeTime = -999f;
+    private const float ResolutionChangeCooldown = 3.0f;
     private float performanceMarginMultiplier = 1.0f;
     private float effectiveTargetFrameTime;
     private bool isFrameCapped = false;
@@ -274,7 +276,7 @@ public class SEGIStationeers : MonoBehaviour
     private int MipFilterKernel => ConfigData.GaussianMipFilter ? 1 : 0;
     // private int DummyVoxelResolution => _adaptiveVoxelResolution * (ConfigData.VoxelAntiAliasing ? 2 : 1);
     private int DummyVoxelResolution => adaptiveVoxelResolution * (adaptiveVoxelAA ? 2 : 1);
-    private int GIRenderRes => adaptiveHalfResolution ? 2 : 1;
+    private int GIRenderRes => ConfigData.HalfResolution ? 2 : 1;
 
     private void Start()
     {
@@ -283,15 +285,20 @@ public class SEGIStationeers : MonoBehaviour
 
     private void OnEnable()
     {
+        notReadyToRender = true;
         InitCheck();
         ResizeRenderTextures();
         CheckSupport();
+        UnityEngine.SceneManagement.SceneManager.sceneLoaded -= OnSceneLoaded;
         UnityEngine.SceneManagement.SceneManager.sceneLoaded += OnSceneLoaded;
         StartRobotEmissionFix();
+        notReadyToRender = false;
     }
 
     private void OnDisable()
     {
+        notReadyToRender = true;
+        UnityEngine.SceneManagement.SceneManager.sceneLoaded -= OnSceneLoaded;
         Cleanup();
     }
 
@@ -836,7 +843,6 @@ public class SEGIStationeers : MonoBehaviour
             new Vector3(adaptiveVoxelSpaceSize, adaptiveVoxelSpaceSize, adaptiveVoxelSpaceSize));
         Gizmos.color = new Color(1.0f, 0.0f, 0.0f, 0.1f);
         Gizmos.color = prevColor;
-        UnityEngine.SceneManagement.SceneManager.sceneLoaded -= OnSceneLoaded;
     }
 
     private void InitCheck()
@@ -949,6 +955,17 @@ public class SEGIStationeers : MonoBehaviour
         };
         sunDepthTexture.Create();
         sunDepthShader.hideFlags = HideFlags.HideAndDontSave;
+
+        renderState = RenderState.Voxelize;
+        voxelFlipFlop = 0;
+        frameCounter = 0;
+        _lastResolutionChangeTime = -999f;
+        _previousLightweightMode = false;
+        _lastSpatialCullUpdate = 0f;
+        _lastEmissiveCacheUpdate = 0f;
+        voxelSpaceOrigin = Vector3.zero;
+        previousVoxelSpaceOrigin = Vector3.zero;
+        voxelSpaceOriginDelta = Vector3.zero;
 
         frameTimeHistory = new Queue<float>();
         frameTimeSum = 0f;
@@ -1530,9 +1547,9 @@ public class SEGIStationeers : MonoBehaviour
         try
         {
             Shader.SetGlobalTexture("SEGIVolumeLevel0", null);
-            for (int i = 1; i < mipLevels; i++)
+            for (int i = 0; i < mipLevels - 1; i++)
             {
-                Shader.SetGlobalTexture($"SEGIVolumeLevel{i}", null);
+                Shader.SetGlobalTexture(MipLevelNames[i], null);
             }
             Shader.SetGlobalTexture("SEGIVolumeTexture1", null);
             Shader.SetGlobalTexture("SEGISunDepth", null);
@@ -1666,30 +1683,34 @@ public class SEGIStationeers : MonoBehaviour
 
         float targetFrameTime = TargetFrameTime;
         float frameTimeRatio = frameTimeAverage / targetFrameTime;
+        bool inResolutionCooldown = Time.unscaledTime - _lastResolutionChangeTime < ResolutionChangeCooldown;
 
         float scaleDelta = 0f;
-        if (frameTimeRatio > scaleDownThreshold) // less quality needed
+        if (!inResolutionCooldown)
         {
-            // scaleDelta = -(frameTimeRatio - scaleDownThreshold) * ConfigData.AdaptiveRate;
-            scaleDelta = -(frameTimeRatio - scaleDownThreshold) * ConfigData.AdaptiveRate * performanceMarginMultiplier;
-        }
-        else if (frameTimeRatio < scaleUpThreshold) // more quality wanted
-        {
-            // scaleDelta = (scaleUpThreshold - frameTimeRatio) * ConfigData.AdaptiveRate;
-            scaleDelta = (scaleUpThreshold - frameTimeRatio) * ConfigData.AdaptiveRate / performanceMarginMultiplier;
-        }
-        else if (adaptiveLongTermTimer >= AdaptiveLongTermInterval)
-        {
-            float samples = adaptiveLongTermTimer / (frameTimeAverage > 0 ? frameTimeAverage : 0.016f);
-            float longTermAverage = samples > 0 ? adaptiveLongTermAcc / samples : 1.0f;
-            float longTermThreshold = AdaptiveLongTermThreshold * (isFrameCapped ? 0.95f : 1.0f);
-            if (longTermAverage <= longTermThreshold && currentAdaptiveScale < 1.0f)
+            if (frameTimeRatio > scaleDownThreshold) // less quality needed
             {
-                scaleDelta = 0.05f / (isFrameCapped ? performanceMarginMultiplier : 1.0f);
+                // scaleDelta = -(frameTimeRatio - scaleDownThreshold) * ConfigData.AdaptiveRate;
+                scaleDelta = -(frameTimeRatio - scaleDownThreshold) * ConfigData.AdaptiveRate * performanceMarginMultiplier;
             }
+            else if (frameTimeRatio < scaleUpThreshold) // more quality wanted
+            {
+                // scaleDelta = (scaleUpThreshold - frameTimeRatio) * ConfigData.AdaptiveRate;
+                scaleDelta = (scaleUpThreshold - frameTimeRatio) * ConfigData.AdaptiveRate / performanceMarginMultiplier;
+            }
+            else if (adaptiveLongTermTimer >= AdaptiveLongTermInterval)
+            {
+                float samples = adaptiveLongTermTimer / (frameTimeAverage > 0 ? frameTimeAverage : 0.016f);
+                float longTermAverage = samples > 0 ? adaptiveLongTermAcc / samples : 1.0f;
+                float longTermThreshold = AdaptiveLongTermThreshold * (isFrameCapped ? 0.95f : 1.0f);
+                if (longTermAverage <= longTermThreshold && currentAdaptiveScale < 1.0f)
+                {
+                    scaleDelta = 0.05f / (isFrameCapped ? performanceMarginMultiplier : 1.0f);
+                }
 
-            adaptiveLongTermAcc = 0f;
-            adaptiveLongTermTimer = 0f;
+                adaptiveLongTermAcc = 0f;
+                adaptiveLongTermTimer = 0f;
+            }
         }
 
         currentAdaptiveScale = Mathf.Clamp(currentAdaptiveScale + scaleDelta, 0.125f, 1.0f);
@@ -1744,9 +1765,14 @@ public class SEGIStationeers : MonoBehaviour
         }
 
         int newVoxelRes = Mathf.Clamp(targetRes, ConfigData.AdaptiveMinVoxelRes, adaptiveMaxVoxelRes);
-        if (Mathf.Abs(newVoxelRes - adaptiveVoxelResolution) >= 32)
+        if (Mathf.Abs(newVoxelRes - adaptiveVoxelResolution) >= 32
+            && Time.unscaledTime - _lastResolutionChangeTime >= ResolutionChangeCooldown)
         {
             adaptiveVoxelResolution = newVoxelRes;
+            _lastResolutionChangeTime = Time.unscaledTime;
+            frameTimeHistory.Clear();
+            frameTimeSum = 0f;
+            frameTimeAverage = 0.016f;
         }
 
         float conesStepsScaleThreshold = ConfigData.GetAdaptiveConesStepsScaleThreshold(adaptiveStrategy);
