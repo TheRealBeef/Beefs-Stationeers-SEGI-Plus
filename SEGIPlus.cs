@@ -43,6 +43,7 @@ public class SEGIStationeers : MonoBehaviour
     private float currentAdaptiveScale = 1.0f;
     private Queue<float> frameTimeHistory = new Queue<float>();
     private float frameTimeAverage = 0.016f;
+    private float frameTimeSum = 0f;
     private float adaptiveLongTermAcc = 0f;
     private float adaptiveLongTermTimer = 0f;
     private const float AdaptiveLongTermInterval = 5.0f;
@@ -69,6 +70,27 @@ public class SEGIStationeers : MonoBehaviour
     private int cachedFrameCap = -1;
     private float lastFrameCapCheck = 0f;
     private const float FrameCapCheckInterval = 1.0f;
+    private float _cachedGIGain = -999f;
+    private float _cachedNearLightGain = -999f;
+    private float _cachedSecondaryBounceGain = -999f;
+    private float _cachedTraceLength = -999f;
+    private float _cachedConeWidth = -999f;
+    private float _cachedOcclusionStrength = -999f;
+    private float _cachedOcclusionPower = -999f;
+    private float _cachedConeTraceBias = -999f;
+    private float _cachedNearOcclusionStrength = -999f;
+    private float _cachedFarOcclusionStrength = -999f;
+    private float _cachedFarthestOcclusionStrength = -999f;
+    private float _cachedBlendWeight = -999f;
+    private int _cachedInnerOcclusionLayers = -999;
+    private int _cachedAdaptiveCones = -999;
+    private int _cachedAdaptiveConeTraceSteps = -999;
+    private int _cachedAdaptiveHalfRes = -999;
+    private const int LowerPrecisionMipThreshold = 3;
+    private static readonly string[] MipLevelNames = {
+        "SEGIVolumeLevel1", "SEGIVolumeLevel2", "SEGIVolumeLevel3",
+        "SEGIVolumeLevel4", "SEGIVolumeLevel5"
+    };
 
     private static readonly string ModDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
     private static AssetBundle _bundle;
@@ -177,6 +199,7 @@ public class SEGIStationeers : MonoBehaviour
     private readonly Dictionary<GameObject, int> _layerRestoreCache = new();
     private List<Renderer> _culledEmissiveRenderers = new();
     private List<Renderer> _cachedEmissiveRenderers = new();
+    private List<Renderer> _emissiveBuildBuffer = new();
     private float _lastSpatialCullUpdate = 0f;
     private float _lastEmissiveCacheUpdate = 0f;
     private Coroutine _emissiveCacheCoroutine;
@@ -185,6 +208,7 @@ public class SEGIStationeers : MonoBehaviour
     private readonly HashSet<int> _fixedRobotMaterialIds = new();
     private bool _robotFixEventHooked;
     private Coroutine _robotFixCoroutine;
+    private static readonly List<Material> _sharedMaterialsBuffer = new();
 
     private struct Pass
     {
@@ -250,7 +274,7 @@ public class SEGIStationeers : MonoBehaviour
     private int MipFilterKernel => ConfigData.GaussianMipFilter ? 1 : 0;
     // private int DummyVoxelResolution => _adaptiveVoxelResolution * (ConfigData.VoxelAntiAliasing ? 2 : 1);
     private int DummyVoxelResolution => adaptiveVoxelResolution * (adaptiveVoxelAA ? 2 : 1);
-    private int GIRenderRes => ConfigData.HalfResolution ? 2 : 1;
+    private int GIRenderRes => adaptiveHalfResolution ? 2 : 1;
 
     private void Start()
     {
@@ -345,7 +369,7 @@ public class SEGIStationeers : MonoBehaviour
         Shader.SetGlobalTexture("SEGIVolumeLevel0", activeVolume);
         for (int i = 0; i < mipLevels - 1; i++)
         {
-            Shader.SetGlobalTexture("SEGIVolumeLevel" + (i + 1).ToString(), volumeTextures[i + 1]);
+            Shader.SetGlobalTexture(MipLevelNames[i], volumeTextures[i + 1]);
         }
 
         if (adaptiveSkipVoxelization)
@@ -437,11 +461,17 @@ public class SEGIStationeers : MonoBehaviour
             var voxelToGIProjection = shadowCamera.projectionMatrix * shadowCamera.worldToCameraMatrix *
                                       voxelCamera.cameraToWorldMatrix;
             Shader.SetGlobalMatrix("SEGIVoxelToGIProjection", voxelToGIProjection);
-            Shader.SetGlobalFloat("SEGISoftSunlight", 0);
-            Shader.SetGlobalFloat("GIGain", ConfigData.GIGain);
-            Shader.SetGlobalFloat("SEGISecondaryBounceGain", ConfigData.SecondaryBounceGain);
-            Shader.SetGlobalInt("SEGIData.InnerOcclusionLayers", ConfigData.InnerOcclusionLayers);
-            Shader.SetGlobalInt("SEGISphericalSkylight", 0);
+            { var v = ConfigData.GIGain;
+            if (!Mathf.Approximately(v, _cachedGIGain))
+            { Shader.SetGlobalFloat("GIGain", v); material.SetFloat("GIGain", v); _cachedGIGain = v; } }
+
+            { var v = ConfigData.SecondaryBounceGain;
+            if (!Mathf.Approximately(v, _cachedSecondaryBounceGain))
+            { Shader.SetGlobalFloat("SEGISecondaryBounceGain", v); _cachedSecondaryBounceGain = v; } }
+
+            { var v = ConfigData.InnerOcclusionLayers;
+            if (v != _cachedInnerOcclusionLayers)
+            { Shader.SetGlobalInt("SEGIData.InnerOcclusionLayers", v); _cachedInnerOcclusionLayers = v; } }
 
             shadowCamera.cullingMask = giCullingMask;
             var sunDirection = sun != null ? -sun.transform.forward : Vector3.down;
@@ -482,7 +512,9 @@ public class SEGIStationeers : MonoBehaviour
 
             clearCompute.SetTexture(0, "RG0", integerVolume);
             clearCompute.SetInt("Res", adaptiveVoxelResolution);
-            clearCompute.Dispatch(0, adaptiveVoxelResolution / 16, adaptiveVoxelResolution / 16, 1);
+            clearCompute.Dispatch(0, Mathf.CeilToInt((float)adaptiveVoxelResolution / 4f),
+                Mathf.CeilToInt((float)adaptiveVoxelResolution / 4f),
+                Mathf.CeilToInt((float)adaptiveVoxelResolution / 4f));
 
             // LogRenderingLayers();
 
@@ -527,12 +559,13 @@ public class SEGIStationeers : MonoBehaviour
             transferIntsCompute.SetTexture(0, "Result", activeVolume);
             transferIntsCompute.SetTexture(0, "PrevResult", previousActiveVolume);
             transferIntsCompute.SetTexture(0, "RG0", integerVolume);
-            transferIntsCompute.SetInt("VoxelAA", ConfigData.VoxelAntiAliasing ? 1 : 0);
+            transferIntsCompute.SetInt("VoxelAA", adaptiveVoxelAA ? 1 : 0);
             transferIntsCompute.SetInt("Resolution", adaptiveVoxelResolution);
             transferIntsCompute.SetVector("VoxelOriginDelta",
                 voxelSpaceOriginDelta / adaptiveVoxelSpaceSize * adaptiveVoxelResolution);
-            transferIntsCompute.Dispatch(0, adaptiveVoxelResolution / 16,
-                adaptiveVoxelResolution / 16, 1);
+            transferIntsCompute.Dispatch(0, Mathf.CeilToInt((float)adaptiveVoxelResolution / 4f),
+                Mathf.CeilToInt((float)adaptiveVoxelResolution / 4f),
+                Mathf.CeilToInt((float)adaptiveVoxelResolution / 4f));
 
             //Manually filter/render mip maps
             Shader.SetGlobalTexture("SEGIVolumeLevel0", activeVolume);
@@ -549,7 +582,7 @@ public class SEGIStationeers : MonoBehaviour
                 // Optimized dispatch - use 8x8 thread groups for better occupancy
                 var mipThreadGroups = Mathf.CeilToInt((float)destinationRes / 8.0f);
                 mipFilterCompute.Dispatch(MipFilterKernel, mipThreadGroups, mipThreadGroups, mipThreadGroups);
-                Shader.SetGlobalTexture("SEGIVolumeLevel" + (i + 1).ToString(), volumeTextures[i + 1]);
+                Shader.SetGlobalTexture(MipLevelNames[i], volumeTextures[i + 1]);
             }
 
             //Advance the voxel flip flop counter
@@ -562,7 +595,7 @@ public class SEGIStationeers : MonoBehaviour
         {
             //Clear the volume texture that is immediately written to in the voxelization scene shader
             clearCompute.SetTexture(0, "RG0", integerVolume);
-            var bounceThreadGroups = Mathf.CeilToInt((float)ConfigData.VoxelResolution / 8.0f);
+            var bounceThreadGroups = Mathf.CeilToInt((float)adaptiveVoxelResolution / 4.0f);
             clearCompute.Dispatch(0, bounceThreadGroups, bounceThreadGroups, bounceThreadGroups);
 
             //Set secondary tracing parameters
@@ -598,6 +631,7 @@ public class SEGIStationeers : MonoBehaviour
         }
 
         //Set parameters
+        int giRenderRes = GIRenderRes;
         Shader.SetGlobalInt("SEGIFrameSwitch", frameCounter);
         Shader.SetGlobalFloat("SEGIVoxelScaleFactor", VoxelScaleFactor);
         material.SetMatrix("CameraToWorld", attachedCamera.cameraToWorldMatrix);
@@ -607,33 +641,62 @@ public class SEGIStationeers : MonoBehaviour
         material.SetInt("FrameSwitch", frameCounter);
         material.SetVector("CameraPosition", transform.position);
         material.SetFloat("DeltaTime", Time.deltaTime);
-        material.SetInt("StochasticSampling", ConfigData.StochasticSampling ? 1 : 0);
-        // material.SetInt("TraceDirections", ConfigData.Cones);
-        // material.SetInt("TraceSteps", ConfigData.ConeTraceSteps);
-        material.SetInt("TraceDirections", adaptiveCones);
-        material.SetInt("TraceSteps", adaptiveConeTraceSteps);
-
-        material.SetFloat("TraceLength", ConfigData.ConeLength);
-        material.SetFloat("ConeSize", ConfigData.ConeWidth);
-        material.SetFloat("OcclusionStrength", ConfigData.OcclusionStrength);
-        material.SetFloat("OcclusionPower", ConfigData.OcclusionPower);
-        material.SetFloat("ConeTraceBias", ConfigData.ConeTraceBias);
-        material.SetFloat("GIGain", ConfigData.GIGain);
-        material.SetFloat("NearLightGain", ConfigData.NearLightGain);
-        material.SetFloat("NearOcclusionStrength", ConfigData.NearOcclusionStrength);
-        // material.SetInt("HalfResolution", ConfigData.HalfResolution ? 1 : 0);
-        material.SetInt("HalfResolution", adaptiveHalfResolution ? 1 : 0);
-
-        material.SetFloat("FarOcclusionStrength", ConfigData.FarOcclusionStrength);
-        material.SetFloat("FarthestOcclusionStrength", ConfigData.FarthestOcclusionStrength);
         material.SetTexture("NoiseTexture", blueNoise[frameCounter % 64]);
-        material.SetFloat("BlendWeight", ConfigData.TemporalBlendWeight);
+        { var v = ConfigData.ConeLength;
+        if (!Mathf.Approximately(v, _cachedTraceLength))
+        { material.SetFloat("TraceLength", v); _cachedTraceLength = v; } }
 
-        //Disabled
-        material.SetInt("DoReflections", 0);
-        material.SetFloat("SkyReflectionIntensity", 0.0f);
-        material.SetFloat("ReflectionOcclusionPower", 0.0f);
-        material.SetInt("ReflectionSteps", 0);
+        { var v = ConfigData.ConeWidth;
+        if (!Mathf.Approximately(v, _cachedConeWidth))
+        { material.SetFloat("ConeSize", v); _cachedConeWidth = v; } }
+
+        { var v = ConfigData.OcclusionStrength;
+        if (!Mathf.Approximately(v, _cachedOcclusionStrength))
+        { material.SetFloat("OcclusionStrength", v); _cachedOcclusionStrength = v; } }
+
+        { var v = ConfigData.OcclusionPower;
+        if (!Mathf.Approximately(v, _cachedOcclusionPower))
+        { material.SetFloat("OcclusionPower", v); _cachedOcclusionPower = v; } }
+
+        { var v = ConfigData.ConeTraceBias;
+        if (!Mathf.Approximately(v, _cachedConeTraceBias))
+        { material.SetFloat("ConeTraceBias", v); _cachedConeTraceBias = v; } }
+
+        { var v = ConfigData.GIGain;
+        if (!Mathf.Approximately(v, _cachedGIGain))
+        { material.SetFloat("GIGain", v); _cachedGIGain = v; } }
+
+        { var v = ConfigData.NearLightGain;
+        if (!Mathf.Approximately(v, _cachedNearLightGain))
+        { material.SetFloat("NearLightGain", v); _cachedNearLightGain = v; } }
+
+        { var v = ConfigData.NearOcclusionStrength;
+        if (!Mathf.Approximately(v, _cachedNearOcclusionStrength))
+        { material.SetFloat("NearOcclusionStrength", v); _cachedNearOcclusionStrength = v; } }
+
+        { var v = ConfigData.FarOcclusionStrength;
+        if (!Mathf.Approximately(v, _cachedFarOcclusionStrength))
+        { material.SetFloat("FarOcclusionStrength", v); _cachedFarOcclusionStrength = v; } }
+
+        { var v = ConfigData.FarthestOcclusionStrength;
+        if (!Mathf.Approximately(v, _cachedFarthestOcclusionStrength))
+        { material.SetFloat("FarthestOcclusionStrength", v); _cachedFarthestOcclusionStrength = v; } }
+
+        { var v = ConfigData.TemporalBlendWeight;
+        if (!Mathf.Approximately(v, _cachedBlendWeight))
+        { material.SetFloat("BlendWeight", v); _cachedBlendWeight = v; } }
+
+        { var v = adaptiveCones;
+        if (v != _cachedAdaptiveCones)
+        { material.SetInt("TraceDirections", v); _cachedAdaptiveCones = v; } }
+
+        { var v = adaptiveConeTraceSteps;
+        if (v != _cachedAdaptiveConeTraceSteps)
+        { material.SetInt("TraceSteps", v); _cachedAdaptiveConeTraceSteps = v; } }
+
+        { var v = adaptiveHalfResolution ? 1 : 0;
+        if (v != _cachedAdaptiveHalfRes)
+        { material.SetInt("HalfResolution", v); _cachedAdaptiveHalfRes = v; } }
 
         //If Visualize Voxels is enabled, just render the voxel visualization shader pass and return
         if (visualizeVoxels)
@@ -643,17 +706,17 @@ public class SEGIStationeers : MonoBehaviour
         }
 
         //Setup temporary textures
-        var gi1 = RenderTexture.GetTemporary(source.width / GIRenderRes, source.height / GIRenderRes, 0,
+        var gi1 = RenderTexture.GetTemporary(source.width / giRenderRes, source.height / giRenderRes, 0,
             RenderTextureFormat.ARGBHalf);
-        var gi2 = RenderTexture.GetTemporary(source.width / GIRenderRes, source.height / GIRenderRes, 0,
+        var gi2 = RenderTexture.GetTemporary(source.width / giRenderRes, source.height / giRenderRes, 0,
             RenderTextureFormat.ARGBHalf);
 
         //Setup textures to hold the current camera depth and normal
-        var currentDepth = RenderTexture.GetTemporary(source.width / GIRenderRes,
-            source.height / GIRenderRes, 0, RenderTextureFormat.RFloat, RenderTextureReadWrite.Linear);
+        var currentDepth = RenderTexture.GetTemporary(source.width / giRenderRes,
+            source.height / giRenderRes, 0, RenderTextureFormat.RFloat, RenderTextureReadWrite.Linear);
         currentDepth.filterMode = FilterMode.Point;
-        var currentNormal = RenderTexture.GetTemporary(source.width / GIRenderRes,
-            source.height / GIRenderRes, 0, RenderTextureFormat.ARGBHalf, RenderTextureReadWrite.Linear);
+        var currentNormal = RenderTexture.GetTemporary(source.width / giRenderRes,
+            source.height / giRenderRes, 0, RenderTextureFormat.ARGBHalf, RenderTextureReadWrite.Linear);
         currentNormal.filterMode = FilterMode.Point;
 
         //Get the camera depth and normals
@@ -685,7 +748,7 @@ public class SEGIStationeers : MonoBehaviour
         }
 
         //If Half Resolution tracing is enabled
-        if (GIRenderRes == 2)
+        if (giRenderRes == 2)
         {
             RenderTexture.ReleaseTemporary(gi1);
             //Setup temporary textures
@@ -786,8 +849,8 @@ public class SEGIStationeers : MonoBehaviour
     private void Init()
     {
         sunDepthShader = Bundle.LoadAsset<Shader>("SEGIRenderSunDepth");
-        clearCompute = Bundle.LoadAsset<ComputeShader>("SEGIClear");
-        transferIntsCompute = Bundle.LoadAsset<ComputeShader>("SEGITransferInts");
+        clearCompute = SegiBeefEdit.LoadAsset<ComputeShader>("SEGIClearBeefEdit");
+        transferIntsCompute = SegiBeefEdit.LoadAsset<ComputeShader>("SEGITransferIntsBeefEdit");
         mipFilterCompute = Bundle.LoadAsset<ComputeShader>("SEGIMipFilter");
         voxelizationShader = Bundle.LoadAsset<Shader>("SEGIVoxelizeScene");
         voxelizationShaderBeefEdit = SegiBeefEdit.LoadAsset<Shader>("SEGIVoxelizeSceneBeefEdit");
@@ -888,6 +951,7 @@ public class SEGIStationeers : MonoBehaviour
         sunDepthShader.hideFlags = HideFlags.HideAndDontSave;
 
         frameTimeHistory = new Queue<float>();
+        frameTimeSum = 0f;
         currentAdaptiveScale = 1.0f;
         adaptiveMaxVoxelRes = (int)ConfigData.VoxelResolution;
         adaptiveMaxVoxelSpaceSize = ConfigData.VoxelSpaceSize;
@@ -905,6 +969,15 @@ public class SEGIStationeers : MonoBehaviour
         adaptiveBilateralFiltering = ConfigData.UseBilateralFiltering;
 
         CreateVolumeTextures();
+
+        Shader.SetGlobalFloat("SEGISoftSunlight", 0);
+        Shader.SetGlobalInt("SEGISphericalSkylight", 0);
+        material.SetInt("StochasticSampling", 1); // ConfigData.StochasticSampling is hardcoded true
+        material.SetInt("DoReflections", 0);
+        material.SetFloat("SkyReflectionIntensity", 0.0f);
+        material.SetFloat("ReflectionOcclusionPower", 0.0f);
+        material.SetInt("ReflectionSteps", 0);
+        _cachedGIGain = -999f;
 
         initalized = true;
     }
@@ -1010,9 +1083,10 @@ public class SEGIStationeers : MonoBehaviour
 
     private IEnumerator UpdateEmissiveCacheCoroutine()
     {
-        var newCache = new List<Renderer>();
+        var newCache = _emissiveBuildBuffer;
+        newCache.Clear();
         var frameStartTime = Time.realtimeSinceStartup * 1000f;
-        var allRenderers = FindObjectsOfType<Renderer>();
+        var allRenderers = FindObjectsByType<Renderer>(FindObjectsSortMode.None);
         const int BATCH_SIZE = 100;
         for (var i = 0; i < allRenderers.Length; i += BATCH_SIZE)
         {
@@ -1036,15 +1110,8 @@ public class SEGIStationeers : MonoBehaviour
                 frameStartTime = Time.realtimeSinceStartup * 1000f;
             }
         }
-        if (newCache.Count > 0)
-        {
-            _cachedEmissiveRenderers = new List<Renderer>(newCache.Count);
-            _cachedEmissiveRenderers.AddRange(newCache);
-        }
-        else
-        {
-            _cachedEmissiveRenderers.Clear();
-        }
+        (_cachedEmissiveRenderers, _emissiveBuildBuffer) = (_emissiveBuildBuffer, _cachedEmissiveRenderers);
+        _emissiveBuildBuffer.Clear();
         _culledEmissiveRenderers.Clear();
         _lastSpatialCullUpdate = 0f;
         _lastEmissiveCacheUpdate = Time.time;
@@ -1064,15 +1131,19 @@ public class SEGIStationeers : MonoBehaviour
         var voxelMax = voxelSpaceOrigin + Vector3.one * halfSize;
 
         int deadRefs = 0;
-        for (var i = _cachedEmissiveRenderers.Count - 1; i >= 0; i--)
+        int writeIdx = 0;
+        int count = _cachedEmissiveRenderers.Count;
+        for (var i = 0; i < count; i++)
         {
             var r = _cachedEmissiveRenderers[i];
             if (r == null || !r)
             {
-                _cachedEmissiveRenderers.RemoveAt(i);
                 deadRefs++;
                 continue;
             }
+
+            _cachedEmissiveRenderers[writeIdx] = r;
+            writeIdx++;
 
             var bounds = r.bounds;
             if (bounds.max.x >= voxelMin.x && bounds.min.x <= voxelMax.x &&
@@ -1083,13 +1154,16 @@ public class SEGIStationeers : MonoBehaviour
             }
         }
 
+        if (writeIdx < count)
+            _cachedEmissiveRenderers.RemoveRange(writeIdx, count - writeIdx);
+
         _lastSpatialCullUpdate = Time.time;
         return _culledEmissiveRenderers;
     }
 
     private bool IsRendererEmissive(Renderer renderer)
     {
-        if (renderer?.materials == null)
+        if (renderer == null)
             // LogExcludedRenderer(renderer, "null materials");
             return false;
 
@@ -1099,7 +1173,8 @@ public class SEGIStationeers : MonoBehaviour
             return false;
         // bool hasEmissiveProperty = false;
         // bool hasEmission = false;
-        foreach (var material in renderer.materials)
+        renderer.GetSharedMaterials(_sharedMaterialsBuffer);
+        foreach (var material in _sharedMaterialsBuffer)
         {
             if (material is null) continue;
             if (ContainsEmissiveKeyword(material.name)) return true;
@@ -1190,7 +1265,8 @@ public class SEGIStationeers : MonoBehaviour
         {
             if (renderer == null) continue;
 
-            foreach (var mat in renderer.sharedMaterials)
+            renderer.GetSharedMaterials(_sharedMaterialsBuffer);
+            foreach (var mat in _sharedMaterialsBuffer)
             {
                 if (mat == null) continue;
 
@@ -1288,7 +1364,10 @@ public class SEGIStationeers : MonoBehaviour
         for (var i = 0; i < mipLevels; i++)
         {
             var resolution = adaptiveVoxelResolution / Mathf.RoundToInt(Mathf.Pow(2, i));
-            volumeTextures[i] = new RenderTexture(resolution, resolution, 0, RenderTextureFormat.ARGBHalf,
+            var format = i >= LowerPrecisionMipThreshold
+                ? RenderTextureFormat.ARGB32
+                : RenderTextureFormat.ARGBHalf;
+            volumeTextures[i] = new RenderTexture(resolution, resolution, 0, format,
                 RenderTextureReadWrite.Linear)
             {
                 dimension = TextureDimension.Tex3D,
@@ -1537,7 +1616,7 @@ public class SEGIStationeers : MonoBehaviour
         if (renderer == null) return;
 
         string objectName = renderer.gameObject.name;
-        string materialNames = string.Join(", ", renderer.materials?.Where(m => m != null).Select(m => m.name) ?? new string[0]);
+        string materialNames = string.Join(", ", renderer.sharedMaterials?.Where(m => m != null).Select(m => m.name) ?? new string[0]);
         string logKey = $"{objectName}|{materialNames}|{reason}";
         if (LoggedExclusions.Add(logKey))
         {
@@ -1549,19 +1628,12 @@ public class SEGIStationeers : MonoBehaviour
     {
         float currentFrameTime = Time.unscaledDeltaTime;
         if (frameTimeHistory.Count >= 30) //30frame avg
-        {
-            frameTimeHistory.Dequeue();
-        }
+            frameTimeSum -= frameTimeHistory.Dequeue();
 
         frameTimeHistory.Enqueue(currentFrameTime);
+        frameTimeSum += currentFrameTime;
+        frameTimeAverage = frameTimeSum / frameTimeHistory.Count;
 
-        if (frameTimeHistory.Count > 0)
-        {
-            float sum = 0f;
-            foreach (var time in frameTimeHistory)
-                sum += time;
-            frameTimeAverage = sum / frameTimeHistory.Count;
-        }
         adaptiveLongTermTimer += Time.unscaledDeltaTime;
         float targetFrameTime = TargetFrameTime;
         float frameTimeRatio = frameTimeAverage / targetFrameTime;
