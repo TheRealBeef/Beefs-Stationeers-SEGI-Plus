@@ -41,6 +41,14 @@ Built upon the work of:
 - **Vinus** (previous implementation): [https://github.com/TerameTechYT/StationeersSharp/tree/development/Source/SEGIMod](https://github.com/TerameTechYT/StationeersSharp/tree/development/Source/SEGIMod)
 
 ## Changelog
+>### Version 1.2.4:
+>- Fix glowing robots, they no longer glow wildly
+
+>### Version 1.2.3:
+>- Another pass on adaptive performance
+>- Only two strategies now: Balanced and Reduce Distance first
+>- Added min distance option for reduce distance first
+>- Properly handle when desired framerate is set above in-game framerate limiter
 
 >### Version 1.2.2:
 >- Another pass on adaptive performance

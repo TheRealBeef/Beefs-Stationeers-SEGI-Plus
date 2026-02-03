@@ -6,6 +6,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using System.Linq;
+using Assets.Scripts.Objects.Entities;
+using Assets.Scripts.Objects;
+using CharacterCustomisation;
 
 
 namespace BeefsSEGIPlus;
@@ -178,6 +181,11 @@ public class SEGIStationeers : MonoBehaviour
     private float _lastEmissiveCacheUpdate = 0f;
     private Coroutine _emissiveCacheCoroutine;
 
+    // Robot fix
+    private readonly HashSet<int> _fixedRobotMaterialIds = new();
+    private bool _robotFixEventHooked;
+    private Coroutine _robotFixCoroutine;
+
     private struct Pass
     {
         public static int DiffuseTrace = 0;
@@ -255,6 +263,7 @@ public class SEGIStationeers : MonoBehaviour
         ResizeRenderTextures();
         CheckSupport();
         UnityEngine.SceneManagement.SceneManager.sceneLoaded += OnSceneLoaded;
+        StartRobotEmissionFix();
     }
 
     private void OnDisable()
@@ -1124,6 +1133,150 @@ public class SEGIStationeers : MonoBehaviour
         return false;
     }
 
+    private void StartRobotEmissionFix()
+    {
+        if (_robotFixCoroutine != null) return;
+        _robotFixCoroutine = StartCoroutine(RobotEmissionFixCoroutine());
+    }
+
+    private IEnumerator RobotEmissionFixCoroutine()
+    {
+        var timeout = 120f;
+        var elapsed = 0f;
+        while (elapsed < timeout)
+        {
+            try
+            {
+                var worldSun = WorldManager.Instance?.WorldSun?.TargetLight;
+                if (worldSun != null) break;
+            }
+            catch { }
+
+            elapsed += 1f;
+            yield return new WaitForSeconds(1f);
+        }
+
+        yield return new WaitForSeconds(5f);
+        HookRobotSpawnEvent();
+        FixAllRobotMaterials();
+
+        _robotFixCoroutine = null;
+    }
+
+    private void FixAllRobotMaterials()
+    {
+        var totalFixed = 0;
+        var robotCount = 0;
+
+        foreach (var human in Human.AllHumans)
+        {
+            if (human == null) continue;
+            if (!human.IsArtificial && human.SpeciesClass != SpeciesClass.Robot) continue;
+
+            robotCount++;
+            totalFixed += FixOneRobotMaterials(human);
+        }
+
+        if (robotCount > 0)
+            SEGIPlugin.Log.LogInfo($"Robot emission fix: {robotCount} robot(s), suppressed {totalFixed} material(s)");
+    }
+
+    private int FixOneRobotMaterials(Human human)
+    {
+        var fixedCount = 0;
+        var renderers = human.GetComponentsInChildren<Renderer>(true);
+
+        foreach (var renderer in renderers)
+        {
+            if (renderer == null) continue;
+
+            foreach (var mat in renderer.sharedMaterials)
+            {
+                if (mat == null) continue;
+
+                var id = mat.GetInstanceID();
+                if (_fixedRobotMaterialIds.Contains(id)) continue;
+
+                if (ShouldSuppressRobotEmission(mat))
+                {
+                    mat.SetColor("_EmissionColor", Color.black);
+                    mat.DisableKeyword("_EMISSION");
+                    mat.globalIlluminationFlags = MaterialGlobalIlluminationFlags.EmissiveIsBlack;
+                    _fixedRobotMaterialIds.Add(id);
+                    fixedCount++;
+                    // SEGIPlugin.Log.LogInfo($"Suppressed emission on '{mat.name}' ({renderer.gameObject.name})");
+                }
+            }
+        }
+
+        return fixedCount;
+    }
+
+    private static bool ShouldSuppressRobotEmission(Material mat)
+    {
+        if (mat.IsKeywordEnabled("_EMISSION")) return false;
+        if (mat.name.StartsWith("Eye", StringComparison.OrdinalIgnoreCase)) return false;
+
+        if (!mat.HasProperty("_EmissionColor")) return false;
+        var emission = mat.GetColor("_EmissionColor");
+        var emissionIntensity = emission.r + emission.g + emission.b;
+        if (emissionIntensity < 0.001f) return false;
+
+        return true;
+    }
+
+    private void HookRobotSpawnEvent()
+    {
+        if (_robotFixEventHooked) return;
+        try
+        {
+            Human.OnHumanCreated += OnHumanCreatedRobotFix;
+            _robotFixEventHooked = true;
+        }
+        catch (Exception ex)
+        {
+            SEGIPlugin.Log.LogWarning($"Could not hook OnHumanCreated for robot fix: {ex.Message}");
+        }
+    }
+
+    private void UnhookRobotSpawnEvent()
+    {
+        if (!_robotFixEventHooked) return;
+        try { Human.OnHumanCreated -= OnHumanCreatedRobotFix; } catch { }
+        _robotFixEventHooked = false;
+    }
+
+    private void OnHumanCreatedRobotFix(Entity entity)
+    {
+        if (entity == null) return;
+        var human = entity as Human;
+        if (human == null) return;
+        if (!human.IsArtificial && human.SpeciesClass != SpeciesClass.Robot) return;
+        StartCoroutine(FixRobotDelayed(human));
+    }
+
+    private IEnumerator FixRobotDelayed(Human human)
+    {
+        yield return new WaitForSeconds(2f);
+        if (human != null)
+        {
+            var count = FixOneRobotMaterials(human);
+            if (count > 0)
+                SEGIPlugin.Log.LogInfo($"Robot emission fix: {count} material(s) on newly spawned '{human.DisplayName}'");
+        }
+    }
+
+    private void CleanupRobotEmissionFix()
+    {
+        if (_robotFixCoroutine != null)
+        {
+            StopCoroutine(_robotFixCoroutine);
+            _robotFixCoroutine = null;
+        }
+        UnhookRobotSpawnEvent();
+        _fixedRobotMaterialIds.Clear();
+    }
+
     private void CreateVolumeTextures()
     {
         if (volumeTextures != null)
@@ -1288,6 +1441,8 @@ public class SEGIStationeers : MonoBehaviour
 
     private void Cleanup()
     {
+        CleanupRobotEmissionFix();
+
         if (_emissiveCacheCoroutine != null)
         {
             StopCoroutine(_emissiveCacheCoroutine);
@@ -1351,6 +1506,10 @@ public class SEGIStationeers : MonoBehaviour
             StopCoroutine(_emissiveCacheCoroutine);
             _emissiveCacheCoroutine = null;
         }
+
+        CleanupRobotEmissionFix();
+        StartRobotEmissionFix();
+
         SEGIPlugin.Log.LogInfo($"SEGI Plus reset for scene: {scene.name}");
     }
 
