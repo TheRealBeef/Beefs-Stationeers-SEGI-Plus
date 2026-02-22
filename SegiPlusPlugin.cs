@@ -15,7 +15,7 @@ namespace BeefsSEGIPlus
         public static ManualLogSource Log;
 
         private float popupDelay = 1.5f;
-        public static ConfigEntry<bool> Update1_2_0_Popup;
+        // public static ConfigEntry<bool> Update1_2_0_Popup;
 
         private class UpdatePopupItem
         {
@@ -61,21 +61,21 @@ namespace BeefsSEGIPlus
             BindAllConfigs();
             Log.LogInfo($"Plugin {PluginInfo.PLUGIN_NAME} is loaded!");
 
-            Update1_2_0_Popup = AddUpdatePopup(
-                "Update1_2_0_Popup",
-                "SEGI Plus was Updated to v1.2.0!",
-                "Changelog v1.2.0:\n " +
-                "- Added first pass of adaptive framerate control that works with the quality setting to try and improve performance\n" +
-                "- This can be used at any quality setting and with or without lightweight mode\n\n" +
-                "## IMPORTANT ##\n" +
-                "- This isn't automatically enabled as it's yet experimental - you can enable this in settings\n\n" +
-                "Press F11 in-game to access the configuration menu or use the workshop button on the left and click on the mod to adjust settings!\n\n" +
-                "Changelog v1.2.1:\n" +
-                "- Widened adaptive framerate slider choices\n" +
-                "- Automatically remove/mark read the major update popup if go into world\n" +
-                "- Added an x10 multiplier option if you want to play around with silly gain values\n" +
-                "- Darkened background of F11 menu slightly",
-                defaultSeen: false);
+            // Update1_2_0_Popup = AddUpdatePopup(
+            //     "Update1_2_0_Popup",
+            //     "SEGI Plus was Updated to v1.2.0!",
+            //     "Changelog v1.2.0:\n " +
+            //     "- Added first pass of adaptive framerate control that works with the quality setting to try and improve performance\n" +
+            //     "- This can be used at any quality setting and with or without lightweight mode\n\n" +
+            //     "## IMPORTANT ##\n" +
+            //     "- This isn't automatically enabled as it's yet experimental - you can enable this in settings\n\n" +
+            //     "Press F11 in-game to access the configuration menu or use the workshop button on the left and click on the mod to adjust settings!\n\n" +
+            //     "Changelog v1.2.1:\n" +
+            //     "- Widened adaptive framerate slider choices\n" +
+            //     "- Automatically remove/mark read the major update popup if go into world\n" +
+            //     "- Added an x10 multiplier option if you want to play around with silly gain values\n" +
+            //     "- Darkened background of F11 menu slightly",
+            //     defaultSeen: false);
 
             popupQueue = new Queue<UpdatePopupItem>();
             foreach (var p in allPopups)

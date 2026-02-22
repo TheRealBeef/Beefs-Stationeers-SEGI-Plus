@@ -17,6 +17,12 @@ public class ConfigMenu : MonoBehaviour
     private GUIStyle _greenBoxStyle;
     private bool _stylesInitialized = false;
 
+    #if SEGI_PROFILER
+        private GUIStyle _profilerBoxStyle;
+        private Vector2 _profilerResultsScroll = Vector2.zero;
+    #endif
+
+
     private void Update()
     {
         bool inGameWorld = IsInGameWorlExclMainMenu();
@@ -211,6 +217,7 @@ public class ConfigMenu : MonoBehaviour
                     GUILayout.TextArea("What's the minimum distance we can use? Lower % = closer but also faster", GUI.skin.box);
                 }
             }
+
             GUILayout.EndVertical();
 
             GUILayout.Space(3);
@@ -241,7 +248,11 @@ public class ConfigMenu : MonoBehaviour
             if (newMultiplier != currentMultiplier) SEGIPlugin.UseGainMultiplier.Value = newMultiplier;
             GUILayout.EndVertical();
 
-            GUILayout.Space(10);
+            #if SEGI_PROFILER
+                GUILayout.Space(10);
+                DrawProfilerSection();
+                GUILayout.Space(10);
+            #endif
 
             GUILayout.Label("Press F11 to toggle this menu", GUILayout.ExpandWidth(true));
             GUILayout.Label("All changes are saved automatically", GUILayout.ExpandWidth(true));
@@ -252,6 +263,123 @@ public class ConfigMenu : MonoBehaviour
 
         GUI.DragWindow();
     }
+
+    #if SEGI_PROFILER
+        private void DrawProfilerSection()
+        {
+            if (_profilerBoxStyle == null)
+                _profilerBoxStyle = MakeStyle(new Color(0.4f, 0.1f, 0.5f, 0.8f), Color.white);
+
+            GUILayout.BeginVertical(_profilerBoxStyle);
+            GUILayout.Label("=== Profiler ===", GUI.skin.box, GUILayout.ExpandWidth(true));
+
+            var segi = Camera.main != null ? Camera.main.GetComponent<SEGIStationeers>() : null;
+            if (segi == null)
+            {
+                GUILayout.Label("SEGI component not found on camera.");
+                GUILayout.EndVertical();
+                return;
+            }
+
+            var profiler = segi.Profiler;
+
+            switch (profiler.State)
+            {
+                case SEGIProfiler.ProfileState.Idle:
+                    GUILayout.TextArea("Profiler",GUI.skin.box);
+                    GUILayout.Space(3);
+                    if (GUILayout.Button("Start Profiling", GUILayout.Height(35)))
+                    {
+                        profiler.StartProfiling();
+                    }
+                    if (profiler.HasResults)
+                    {
+                        GUILayout.Space(3);
+                        GUILayout.Label("Results:");
+                        DrawProfilerResults(profiler);
+                    }
+                    break;
+
+                case SEGIProfiler.ProfileState.Running:
+                    GUILayout.Label(profiler.StatusMessage);
+
+                    float progress = profiler.GetProgress();
+                    Rect progressRect = GUILayoutUtility.GetRect(GUIContent.none, GUI.skin.box,
+                        GUILayout.Height(24), GUILayout.ExpandWidth(true));
+
+                    GUI.Box(progressRect, "");
+
+                    Color oldBg = GUI.backgroundColor;
+                    GUI.backgroundColor = new Color(0.2f, 0.7f, 0.3f, 1f);
+                    GUI.Box(new Rect(progressRect.x, progressRect.y,
+                        progressRect.width * progress, progressRect.height), "");
+                    GUI.backgroundColor = oldBg;
+
+                    float stepWidth = progressRect.width / profiler.StepCount;
+                    for (int i = 1; i < profiler.StepCount; i++)
+                    {
+                        float x = progressRect.x + stepWidth * i;
+                        GUI.DrawTexture(new Rect(x, progressRect.y, 1, progressRect.height),
+                            Texture2D.whiteTexture);
+                    }
+
+                    GUI.Label(progressRect,
+                        $"Step {profiler.CurrentStepIndex + 1}/{profiler.StepCount}  —  " +
+                        $"{progress * 100f:F0}%  ({profiler.TotalFrameCount - (int)(profiler.TotalFrameCount * progress)} frames left)",
+                        new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter });
+
+                    GUILayout.Space(3);
+                    if (GUILayout.Button("Cancel"))
+                    {
+                        profiler.Cancel();
+                    }
+                    break;
+
+                case SEGIProfiler.ProfileState.Complete:
+                    GUILayout.Label("Profiling complete!");
+                    DrawProfilerResults(profiler);
+                    GUILayout.Space(3);
+                    if (GUILayout.Button("Run Again", GUILayout.Height(30)))
+                    {
+                        profiler.StartProfiling();
+                    }
+                    break;
+            }
+
+            GUILayout.EndVertical();
+        }
+
+        private void DrawProfilerResults(SEGIProfiler profiler)
+        {
+            string results = profiler.GetResultsTable();
+
+            _profilerResultsScroll = GUILayout.BeginScrollView(_profilerResultsScroll,
+                GUILayout.Height(350), GUILayout.ExpandWidth(true));
+
+            GUIStyle monoStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 11,
+                wordWrap = false,
+                richText = false
+            };
+            try
+            {
+                var font = Font.CreateDynamicFontFromOSFont("Consolas", 12);
+                if (font != null) monoStyle.font = font;
+            }
+            catch { }
+
+            GUILayout.Label(results, monoStyle);
+            GUILayout.EndScrollView();
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Copy"))
+            {
+                GUIUtility.systemCopyBuffer = results;
+            }
+            GUILayout.EndHorizontal();
+        }
+    #endif
 
     private void OnDestroy()
     {

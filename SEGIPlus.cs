@@ -24,6 +24,19 @@ public class SEGIStationeers : MonoBehaviour
     private const float SpatialCullUpdateInterval = 0.1f; //s
     private const int mipLevels = 6;
 
+    #if SEGI_PROFILER
+        public readonly SEGIProfiler Profiler = new();
+    #else
+        private readonly struct _ProfilerNoop
+        {
+            public bool ShouldSkip(string _) => false;
+            public bool IsActive => false;
+            public void EndFrame() { }
+        }
+        private readonly _ProfilerNoop Profiler = default;
+    #endif
+
+
     private bool initalized = false;
     private bool notReadyToRender = false;
     private bool _previousLightweightMode = false;
@@ -86,11 +99,16 @@ public class SEGIStationeers : MonoBehaviour
     private int _cachedAdaptiveCones = -999;
     private int _cachedAdaptiveConeTraceSteps = -999;
     private int _cachedAdaptiveHalfRes = -999;
-    private const int LowerPrecisionMipThreshold = 3;
     private static readonly string[] MipLevelNames = {
         "SEGIVolumeLevel1", "SEGIVolumeLevel2", "SEGIVolumeLevel3",
         "SEGIVolumeLevel4", "SEGIVolumeLevel5"
     };
+
+    private const int ProbeSpacing = 3;
+    private ComputeShader coneTraceCompute;
+    private int _probeTraceKernel;
+    private int _probeInterpolateKernel;
+    private RenderTexture probeIrradiance;
 
     private static readonly string ModDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
     private static AssetBundle _bundle;
@@ -406,6 +424,12 @@ public class SEGIStationeers : MonoBehaviour
 
         var previousActive = RenderTexture.active;
 
+        if (Profiler.ShouldSkip("SEGI_All"))
+        {
+            RenderTexture.active = previousActive;
+            return;
+        }
+
         if (ConfigData.AdaptivePerformance)
         {
             adaptiveVoxelizationFrameCounter++;
@@ -553,6 +577,9 @@ public class SEGIStationeers : MonoBehaviour
                 || _cacheNeedsFullRefresh
                 || Vector3.Angle(_lastSunDirection, currentSunDirection) > 0.5f;
 
+            if (Profiler.IsActive)
+                shouldRefreshSun = !Profiler.ShouldSkip("SunDepth");
+
             if (sunAboveHorizon && shouldRefreshSun)
             {
                 Graphics.SetRenderTarget(sunDepthTexture);
@@ -615,7 +642,8 @@ public class SEGIStationeers : MonoBehaviour
                     voxelCamera.cullingMask = 1 << tempLayer;
                     voxelCamera.allowHDR = true;
 
-                    voxelCamera.RenderWithShader(voxelizationShader, "");
+                    if (!Profiler.ShouldSkip("EmissiveVoxelize"))
+                        voxelCamera.RenderWithShader(voxelizationShader, "");
 
                     voxelCamera.cullingMask = originalMask;
                 foreach (var kvp in _layerRestoreCache)
@@ -685,10 +713,13 @@ public class SEGIStationeers : MonoBehaviour
                         var originalMask = voxelCamera.cullingMask;
                         voxelCamera.cullingMask = 1 << tempLayer;
 
-                        Graphics.SetRandomWriteTarget(1, geometryCacheCopy);
-                        voxelCamera.targetTexture = dummyVoxelTextureAAScaled;
-                        voxelCamera.RenderWithShader(voxelizationShaderBeefEdit, "");
-                        Graphics.ClearRandomWriteTargets();
+                        if (!Profiler.ShouldSkip("GeomVoxelize"))
+                        {
+                            Graphics.SetRandomWriteTarget(1, geometryCacheCopy);
+                            voxelCamera.targetTexture = dummyVoxelTextureAAScaled;
+                            voxelCamera.RenderWithShader(voxelizationShaderBeefEdit, "");
+                            Graphics.ClearRandomWriteTargets();
+                        }
 
                         voxelCamera.cullingMask = originalMask;
                         foreach (var kvp in _layerRestoreCache)
@@ -732,10 +763,13 @@ public class SEGIStationeers : MonoBehaviour
                     var originalMask = voxelCamera.cullingMask;
                     voxelCamera.cullingMask = 1 << tempLayer;
 
-                    Graphics.SetRandomWriteTarget(1, integerVolume);
-                    voxelCamera.targetTexture = dummyVoxelTextureAAScaled;
-                    voxelCamera.RenderWithShader(voxelizationEmissiveOnlyShader, "");
-                    Graphics.ClearRandomWriteTargets();
+                    if (!Profiler.ShouldSkip("EmissiveVoxelize"))
+                    {
+                        Graphics.SetRandomWriteTarget(1, integerVolume);
+                        voxelCamera.targetTexture = dummyVoxelTextureAAScaled;
+                        voxelCamera.RenderWithShader(voxelizationEmissiveOnlyShader, "");
+                        Graphics.ClearRandomWriteTargets();
+                    }
 
                     voxelCamera.cullingMask = originalMask;
                     foreach (var kvp in _layerRestoreCache)
@@ -745,30 +779,36 @@ public class SEGIStationeers : MonoBehaviour
                     }
                 }
 
-                int mergeGroups = Mathf.CeilToInt((float)adaptiveVoxelResolution / 16f);
-                mergeVolumesCompute.SetTexture(0, "Result", activeVolume);
-                mergeVolumesCompute.SetTexture(0, "GeometryCache", geometryCacheVolume);
-                mergeVolumesCompute.SetTexture(0, "EmissiveVolume", integerVolume);
-                mergeVolumesCompute.SetInt("Resolution", adaptiveVoxelResolution);
-                mergeVolumesCompute.SetInt("VoxelAA", adaptiveVoxelAA ? 1 : 0);
-                mergeVolumesCompute.Dispatch(0, mergeGroups, mergeGroups, 1);
+                if (!Profiler.ShouldSkip("MergeVolumes"))
+                {
+                    int mergeGroups = Mathf.CeilToInt((float)adaptiveVoxelResolution / 16f);
+                    mergeVolumesCompute.SetTexture(0, "Result", activeVolume);
+                    mergeVolumesCompute.SetTexture(0, "GeometryCache", geometryCacheVolume);
+                    mergeVolumesCompute.SetTexture(0, "EmissiveVolume", integerVolume);
+                    mergeVolumesCompute.SetInt("Resolution", adaptiveVoxelResolution);
+                    mergeVolumesCompute.SetInt("VoxelAA", adaptiveVoxelAA ? 1 : 0);
+                    mergeVolumesCompute.Dispatch(0, mergeGroups, mergeGroups, 1);
+                }
             }
 
             //Manually filter/render mip maps
             Shader.SetGlobalTexture("SEGIVolumeLevel0", activeVolume);
-            for (var i = 0; i < mipLevels - 1; i++)
+            if (!Profiler.ShouldSkip("MipChain"))
             {
-                var source = volumeTextures[i];
-                if (i == 0) source = activeVolume;
+                for (var i = 0; i < mipLevels - 1; i++)
+                {
+                    var source = volumeTextures[i];
+                    if (i == 0) source = activeVolume;
 
-                var destinationRes = adaptiveVoxelResolution / Mathf.RoundToInt(Mathf.Pow(2, i + 1.0f));
-                mipFilterCompute.SetInt("destinationRes", destinationRes);
-                mipFilterCompute.SetTexture(MipFilterKernel, "Source", source);
-                mipFilterCompute.SetTexture(MipFilterKernel, "Destination", volumeTextures[i + 1]);
+                    var destinationRes = adaptiveVoxelResolution / Mathf.RoundToInt(Mathf.Pow(2, i + 1.0f));
+                    mipFilterCompute.SetInt("destinationRes", destinationRes);
+                    mipFilterCompute.SetTexture(MipFilterKernel, "Source", source);
+                    mipFilterCompute.SetTexture(MipFilterKernel, "Destination", volumeTextures[i + 1]);
 
-                var mipThreadGroups = Mathf.CeilToInt((float)destinationRes / 8.0f);
-                mipFilterCompute.Dispatch(MipFilterKernel, mipThreadGroups, mipThreadGroups, 1);
-                Shader.SetGlobalTexture(MipLevelNames[i], volumeTextures[i + 1]);
+                    var mipThreadGroups = Mathf.CeilToInt((float)destinationRes / 8.0f);
+                    mipFilterCompute.Dispatch(MipFilterKernel, mipThreadGroups, mipThreadGroups, 1);
+                    Shader.SetGlobalTexture(MipLevelNames[i], volumeTextures[i + 1]);
+                }
             }
 
             //Advance the voxel flip flop counter
@@ -779,29 +819,32 @@ public class SEGIStationeers : MonoBehaviour
         }
         else if (renderState == RenderState.Bounce)
         {
-            //Clear the volume texture that is immediately written to in the voxelization scene shader
-                clearCompute.SetTexture(0, "RG0", integerVolume);
-            var bounceThreadGroups = Mathf.CeilToInt((float)adaptiveVoxelResolution / 4.0f);
-            clearCompute.Dispatch(0, bounceThreadGroups, bounceThreadGroups, bounceThreadGroups);
+            if (!Profiler.ShouldSkip("BouncePass"))
+            {
+                //Clear the volume texture that is immediately written to in the voxelization scene shader
+                    clearCompute.SetTexture(0, "RG0", integerVolume);
+                var bounceThreadGroups = Mathf.CeilToInt((float)adaptiveVoxelResolution / 4.0f);
+                clearCompute.Dispatch(0, bounceThreadGroups, bounceThreadGroups, bounceThreadGroups);
 
-            //Set secondary tracing parameters
-            Shader.SetGlobalInt("SEGISecondaryCones", ConfigData.SecondaryCones);
-            Shader.SetGlobalFloat("SEGISecondaryOcclusionStrength", ConfigData.SecondaryOcclusionStrength);
+                //Set secondary tracing parameters
+                Shader.SetGlobalInt("SEGISecondaryCones", ConfigData.SecondaryCones);
+                Shader.SetGlobalFloat("SEGISecondaryOcclusionStrength", ConfigData.SecondaryOcclusionStrength);
 
-            //Render the scene from the voxel camera object with the voxel tracing shader to render a bounce of GI into the irradiance volume
-            Graphics.SetRandomWriteTarget(1, integerVolume);
-            voxelCamera.targetTexture = dummyVoxelTextureFixed;
+                //Render the scene from the voxel camera object with the voxel tracing shader to render a bounce of GI into the irradiance volume
+                Graphics.SetRandomWriteTarget(1, integerVolume);
+                voxelCamera.targetTexture = dummyVoxelTextureFixed;
 
-            voxelCamera.RenderWithShader(voxelTracingShaderBeefEdit, "");
+                voxelCamera.RenderWithShader(voxelTracingShaderBeefEdit, "");
 
-            Graphics.ClearRandomWriteTargets();
+                Graphics.ClearRandomWriteTargets();
 
-            int bounceTransferGroups = Mathf.CeilToInt((float)adaptiveVoxelResolution / 4f);
-            transferIntsCompute.SetTexture(1, "Result", secondaryIrradianceVolume);
-            transferIntsCompute.SetTexture(1, "RG0", integerVolume);
-            transferIntsCompute.SetInt("Resolution", adaptiveVoxelResolution);
-            transferIntsCompute.Dispatch(1, bounceTransferGroups, bounceTransferGroups, bounceTransferGroups);
-            Shader.SetGlobalTexture("SEGIVolumeTexture1", secondaryIrradianceVolume);
+                int bounceTransferGroups = Mathf.CeilToInt((float)adaptiveVoxelResolution / 4f);
+                transferIntsCompute.SetTexture(1, "Result", secondaryIrradianceVolume);
+                transferIntsCompute.SetTexture(1, "RG0", integerVolume);
+                transferIntsCompute.SetInt("Resolution", adaptiveVoxelResolution);
+                transferIntsCompute.Dispatch(1, bounceTransferGroups, bounceTransferGroups, bounceTransferGroups);
+                Shader.SetGlobalTexture("SEGIVolumeTexture1", secondaryIrradianceVolume);
+            }
 
             renderState = RenderState.Voxelize;
         }
@@ -818,6 +861,7 @@ public class SEGIStationeers : MonoBehaviour
         {
             Graphics.Blit(source, destination);
             _wasBypassed = true;
+            Profiler.EndFrame();
             return;
         }
 
@@ -855,6 +899,14 @@ public class SEGIStationeers : MonoBehaviour
         if (notReadyToRender || material == null)
         {
             Graphics.Blit(source, destination);
+            Profiler.EndFrame();
+            return;
+        }
+
+        if (Profiler.ShouldSkip("SEGI_All"))
+        {
+            Graphics.Blit(source, destination);
+            Profiler.EndFrame();
             return;
         }
 
@@ -930,6 +982,7 @@ public class SEGIStationeers : MonoBehaviour
         if (visualizeVoxels)
         {
             Graphics.Blit(source, destination, material, Pass.VisualizeVoxels);
+            Profiler.EndFrame();
             return;
         }
 
@@ -960,16 +1013,81 @@ public class SEGIStationeers : MonoBehaviour
         material.SetTexture("PreviousDepth", previousCameraDepth);
 
         //Render diffuse GI tracing result
-        Graphics.Blit(source, gi2, material, Pass.DiffuseTrace);
+        if (!Profiler.ShouldSkip("DiffuseTrace"))
+        {
+            if (coneTraceCompute == null)
+            {
+                Graphics.Blit(source, gi2, material, Pass.DiffuseTrace);
+            }
+            else
+            {
+                int probeSpacing = ProbeSpacing;
+                int traceW = gi2.width;
+                int traceH = gi2.height;
+                if (giRenderRes == 2)
+                    probeSpacing = Mathf.Max(2, probeSpacing / 2);
+
+                int probeW = Mathf.CeilToInt((float)traceW / probeSpacing);
+                int probeH = Mathf.CeilToInt((float)traceH / probeSpacing);
+
+                if (probeIrradiance == null || probeIrradiance.width != probeW || probeIrradiance.height != probeH)
+                {
+                    if (probeIrradiance != null) CleanupTexture(ref probeIrradiance);
+                    probeIrradiance = new RenderTexture(probeW, probeH, 0, RenderTextureFormat.ARGBHalf)
+                    {
+                        enableRandomWrite = true,
+                        filterMode = FilterMode.Point,
+                        hideFlags = HideFlags.HideAndDontSave
+                    };
+                    probeIrradiance.Create();
+                }
+
+                if (!gi2.enableRandomWrite)
+                {
+                    gi2.Release();
+                    gi2.enableRandomWrite = true;
+                    gi2.Create();
+                }
+
+                SetComputeTraceUniforms(_probeTraceKernel);
+                coneTraceCompute.SetTexture(_probeTraceKernel, "ProbeIrradiance", probeIrradiance);
+                coneTraceCompute.SetTextureFromGlobal(_probeTraceKernel, "DepthTexture", "_CameraDepthTexture");
+                coneTraceCompute.SetTexture(_probeTraceKernel, "GBufferNormals", Shader.GetGlobalTexture("_CameraGBufferTexture2") as Texture);
+                coneTraceCompute.SetTexture(_probeTraceKernel, "NoiseTexture", blueNoise[frameCounter % 64]);
+                coneTraceCompute.SetInt("FrameCounter", frameCounter);
+                BindVolumeTexturesToCompute(_probeTraceKernel);
+                coneTraceCompute.SetMatrix("CameraToWorld", attachedCamera.cameraToWorldMatrix);
+                coneTraceCompute.SetMatrix("ProjectionMatrixInverse", attachedCamera.projectionMatrix.inverse);
+                coneTraceCompute.SetInts("Resolution", traceW, traceH);
+                coneTraceCompute.SetInts("ProbeGridSize", probeW, probeH);
+                coneTraceCompute.SetInt("ProbeSpacing", probeSpacing);
+                coneTraceCompute.SetInt("HalfResolution", giRenderRes == 2 ? 1 : 0);
+
+                // Dispatch probe trace
+                coneTraceCompute.Dispatch(_probeTraceKernel,
+                    Mathf.CeilToInt(probeW / 8f),
+                    Mathf.CeilToInt(probeH / 8f), 1);
+
+                SetComputeTraceUniforms(_probeInterpolateKernel);
+                coneTraceCompute.SetTexture(_probeInterpolateKernel, "ProbeIrradianceIn", probeIrradiance);
+                coneTraceCompute.SetTexture(_probeInterpolateKernel, "Result", gi2);
+                coneTraceCompute.SetTextureFromGlobal(_probeInterpolateKernel, "DepthTexture", "_CameraDepthTexture");
+                coneTraceCompute.SetTexture(_probeInterpolateKernel, "GBufferNormals", Shader.GetGlobalTexture("_CameraGBufferTexture2") as Texture);
+                coneTraceCompute.SetInts("Resolution", traceW, traceH);
+                coneTraceCompute.SetInts("ProbeGridSize", probeW, probeH);
+                coneTraceCompute.SetInt("ProbeSpacing", probeSpacing);
+
+                coneTraceCompute.Dispatch(_probeInterpolateKernel,
+                    Mathf.CeilToInt(traceW / 8f),
+                    Mathf.CeilToInt(traceH / 8f), 1);
+            }
+        }
+        else
+            Graphics.Blit(source, gi2);
 
         //Perform bilateral filtering
-        // if (ConfigData.UseBilateralFiltering)
-        if (adaptiveBilateralFiltering)
+        if (adaptiveBilateralFiltering && !Profiler.ShouldSkip("BilateralBlur"))
         {
-            material.SetVector("Kernel", new Vector2(0.0f, 1.0f));
-            Graphics.Blit(gi2, gi1, material, Pass.BilateralBlur);
-            material.SetVector("Kernel", new Vector2(1.0f, 0.0f));
-            Graphics.Blit(gi1, gi2, material, Pass.BilateralBlur);
             material.SetVector("Kernel", new Vector2(0.0f, 1.0f));
             Graphics.Blit(gi2, gi1, material, Pass.BilateralBlur);
             material.SetVector("Kernel", new Vector2(1.0f, 0.0f));
@@ -999,7 +1117,7 @@ public class SEGIStationeers : MonoBehaviour
             material.SetVector("Kernel", new Vector2(0.0f, 1.0f));
 
             //Perform temporal reprojection and blending
-            if (ConfigData.TemporalBlendWeight < 1.0f)
+            if (ConfigData.TemporalBlendWeight < 1.0f && !Profiler.ShouldSkip("TemporalBlend"))
             {
                 Graphics.Blit(gi3, gi4);
                 Graphics.Blit(gi4, gi3, material, Pass.TemporalBlend);
@@ -1020,7 +1138,7 @@ public class SEGIStationeers : MonoBehaviour
         else //If Half Resolution tracing is disabled
         {
             //Perform temporal reprojection and blending
-            if (ConfigData.TemporalBlendWeight < 1.0f)
+            if (ConfigData.TemporalBlendWeight < 1.0f && !Profiler.ShouldSkip("TemporalBlend"))
             {
                 Graphics.Blit(gi2, gi1, material, Pass.TemporalBlend);
                 Graphics.Blit(gi1, previousGIResult);
@@ -1043,6 +1161,7 @@ public class SEGIStationeers : MonoBehaviour
         //Visualize the sun depth texture
         if (visualizeSunDepthTexture) Graphics.Blit(sunDepthTexture, destination);
 
+        Profiler.EndFrame();
 
         //Set matrices/vectors for use during temporal reprojection
         material.SetMatrix("ProjectionPrev", attachedCamera.projectionMatrix);
@@ -1053,6 +1172,35 @@ public class SEGIStationeers : MonoBehaviour
 
         //Advance the frame counter
         frameCounter = (frameCounter + 1) % 64;
+    }
+
+    private void SetComputeTraceUniforms(int kernel)
+    {
+        if (coneTraceCompute == null) return;
+        coneTraceCompute.SetFloat("SEGIVoxelScaleFactor", VoxelScaleFactor);
+        coneTraceCompute.SetInt("StochasticSampling", 1);
+        coneTraceCompute.SetInt("TraceDirections", adaptiveCones);
+        coneTraceCompute.SetInt("TraceSteps", adaptiveConeTraceSteps);
+        coneTraceCompute.SetFloat("TraceLength", ConfigData.ConeLength);
+        coneTraceCompute.SetFloat("ConeSize", ConfigData.ConeWidth);
+        coneTraceCompute.SetFloat("OcclusionStrength", ConfigData.OcclusionStrength);
+        coneTraceCompute.SetFloat("OcclusionPower", ConfigData.OcclusionPower);
+        coneTraceCompute.SetFloat("ConeTraceBias", ConfigData.ConeTraceBias);
+        coneTraceCompute.SetFloat("GIGain", ConfigData.GIGain);
+        coneTraceCompute.SetFloat("NearLightGain", ConfigData.NearLightGain);
+        coneTraceCompute.SetFloat("NearOcclusionStrength", ConfigData.NearOcclusionStrength);
+        coneTraceCompute.SetFloat("FarOcclusionStrength", ConfigData.FarOcclusionStrength);
+        coneTraceCompute.SetFloat("FarthestOcclusionStrength", ConfigData.FarthestOcclusionStrength);
+        coneTraceCompute.SetFloat("SEGISoftSunlight", 0);
+        coneTraceCompute.SetInt("SEGISphericalSkylight", 0);
+    }
+
+    private void BindVolumeTexturesToCompute(int kernel)
+    {
+        if (coneTraceCompute == null) return;
+        coneTraceCompute.SetTexture(kernel, "SEGIVolumeLevel0", activeVolume);
+        for (int i = 1; i < mipLevels && i <= 5; i++)
+            coneTraceCompute.SetTexture(kernel, "SEGIVolumeLevel" + i, volumeTextures[i]);
     }
 
     private void OnDrawGizmosSelected()
@@ -1088,10 +1236,17 @@ public class SEGIStationeers : MonoBehaviour
         mergeVolumesCompute = SegiBeefEdit.LoadAsset<ComputeShader>("SEGIMergeVolumesBeefEdit");
         sliceClearCompute = SegiBeefEdit.LoadAsset<ComputeShader>("SEGISliceClearBeefEdit");
         scrollVolumeCompute = SegiBeefEdit.LoadAsset<ComputeShader>("SEGIScrollVolumeBeefEdit");
-        material = new Material(Bundle.LoadAsset<Shader>("SEGI"))
+        var mainShader = SegiBeefEdit.LoadAsset<Shader>("SEGIBeefEdit");
+        material = new Material(mainShader)
         {
             hideFlags = HideFlags.HideAndDontSave
         };
+        coneTraceCompute = SegiBeefEdit.LoadAsset<ComputeShader>("SEGIConeTraceBeefEdit");
+        if (coneTraceCompute != null)
+        {
+            _probeTraceKernel = coneTraceCompute.FindKernel("ProbeTraceCS");
+            _probeInterpolateKernel = coneTraceCompute.FindKernel("ProbeInterpolateCS");
+        }
 
         ConfigureCullingMask();
 
@@ -1734,9 +1889,7 @@ public class SEGIStationeers : MonoBehaviour
         for (var i = 0; i < mipLevels; i++)
         {
             var resolution = adaptiveVoxelResolution / Mathf.RoundToInt(Mathf.Pow(2, i));
-            var format = i >= LowerPrecisionMipThreshold
-                ? RenderTextureFormat.ARGB32
-                : RenderTextureFormat.ARGBHalf;
+            var format = RenderTextureFormat.ARGBHalf;
             volumeTextures[i] = new RenderTexture(resolution, resolution, 0, format,
                 RenderTextureReadWrite.Linear)
             {
@@ -1823,6 +1976,9 @@ public class SEGIStationeers : MonoBehaviour
         };
         geometryCacheCopy.Create();
         geometryCacheCopy.hideFlags = HideFlags.HideAndDontSave;
+
+        if (probeIrradiance) CleanupTexture(ref probeIrradiance);
+        probeIrradiance = null;
 
         _cacheNeedsFullRefresh = true;
         _hybridCacheReady = false;
@@ -1919,6 +2075,7 @@ public class SEGIStationeers : MonoBehaviour
 
         CleanupTexture(ref secondaryIrradianceVolume);
         CleanupTexture(ref volumeTextureB);
+        CleanupTexture(ref probeIrradiance);
         CleanupTexture(ref dummyVoxelTextureAAScaled);
         CleanupTexture(ref dummyVoxelTextureFixed);
     }
@@ -2014,6 +2171,8 @@ public class SEGIStationeers : MonoBehaviour
         scrollVolumeCompute.SetInts("ScrollOffset", scrollOffset.x, scrollOffset.y, scrollOffset.z);
         scrollVolumeCompute.SetInt("Resolution", adaptiveVoxelResolution);
         scrollVolumeCompute.Dispatch(0, scrollGroups, scrollGroups, 1);
+
+        _sunDepthDirty = true;
 
         if (_buildCycleActive)
         {
@@ -2241,7 +2400,7 @@ public class SEGIStationeers : MonoBehaviour
         {
             adaptiveHalfResolution = ConfigData.AdaptiveMaxHalfResolution;
             adaptiveVoxelAA = ConfigData.AdaptiveMaxVoxelAA;
-            adaptiveBilateralFiltering = ConfigData.AdaptiveMaxBilateralFiltering;
+            adaptiveBilateralFiltering = true;
         }
         else
         {
@@ -2261,25 +2420,20 @@ public class SEGIStationeers : MonoBehaviour
             else if (currentAdaptiveScale >= voxelAAOnThreshold)
                 adaptiveVoxelAA = ConfigData.AdaptiveMaxVoxelAA;
 
-            float bilateralOffThreshold = ConfigData.GetAdaptiveBilateralOffThreshold(adaptiveStrategy);
-            float bilateralOnThreshold = ConfigData.GetAdaptiveBilateralOnThreshold(adaptiveStrategy);
-
-            if (currentAdaptiveScale < bilateralOffThreshold)
-                adaptiveBilateralFiltering = false;
-            else if (currentAdaptiveScale >= bilateralOnThreshold)
-                adaptiveBilateralFiltering = ConfigData.AdaptiveMaxBilateralFiltering;
+            adaptiveBilateralFiltering = true;
         }
 
-        float interval3Threshold = ConfigData.GetAdaptiveVoxelInterval3Threshold(adaptiveStrategy);
-        float interval2Threshold = ConfigData.GetAdaptiveVoxelInterval2Threshold(adaptiveStrategy);
-        float interval1Threshold = ConfigData.GetAdaptiveVoxelInterval1Threshold(adaptiveStrategy);
-
-        if (currentAdaptiveScale < interval3Threshold)
-            adaptiveVoxelizationInterval = 3;
-        else if (currentAdaptiveScale < interval2Threshold)
-            adaptiveVoxelizationInterval = 2;
-        else if (currentAdaptiveScale > interval1Threshold)
-            adaptiveVoxelizationInterval = 1;
+        // float interval3Threshold = ConfigData.GetAdaptiveVoxelInterval3Threshold(adaptiveStrategy);
+        // float interval2Threshold = ConfigData.GetAdaptiveVoxelInterval2Threshold(adaptiveStrategy);
+        // float interval1Threshold = ConfigData.GetAdaptiveVoxelInterval1Threshold(adaptiveStrategy);
+        //
+        // if (currentAdaptiveScale < interval3Threshold)
+        //     adaptiveVoxelizationInterval = 3;
+        // else if (currentAdaptiveScale < interval2Threshold)
+        //     adaptiveVoxelizationInterval = 2;
+        // else if (currentAdaptiveScale > interval1Threshold)
+        //     adaptiveVoxelizationInterval = 1;
+        adaptiveVoxelizationInterval = 1;
 
         // float currentFPS = 1.0f / frameTimeAverage;
         // SEGIPlugin.Log.LogInfo(
