@@ -10,7 +10,6 @@ using Assets.Scripts.Objects.Entities;
 using Assets.Scripts.Objects;
 using CharacterCustomisation;
 
-
 namespace BeefsSEGIPlus;
 
 [ExecuteInEditMode]
@@ -22,7 +21,6 @@ public class SEGIStationeers : MonoBehaviour
     // private const float SunHorizonThreshold = 5.0f; //deg
     private const float SunHorizonThresholdMin = 2.0f; // deg
     private const float SunHorizonThresholdMax = 10.0f; // deg
-    private const float MaterialCacheClearInterval = 300f; //s
     private const float SpatialCullUpdateInterval = 0.1f; //s
     private const int mipLevels = 6;
 
@@ -135,12 +133,12 @@ public class SEGIStationeers : MonoBehaviour
 
     private static readonly HashSet<string> LoggedExclusions = new();
 
-
     public bool sphericalSkylight;
     public bool visualizeSunDepthTexture;
     public bool visualizeGI;
     public bool visualizeVoxels;
     public bool updateGI = true;
+    public bool bypassRendering = false;
     public LayerMask giCullingMask = int.MaxValue;
     public Light sun;
     public Color skyColor;
@@ -182,11 +180,15 @@ public class SEGIStationeers : MonoBehaviour
     private RenderTexture dummyVoxelTextureFixed;
     private Shader voxelizationShader;
     private Shader voxelizationShaderBeefEdit;
+    private Shader voxelizationEmissiveOnlyShader;
     private Shader voxelTracingShader;
     private Shader voxelTracingShaderBeefEdit;
     private ComputeShader clearCompute;
     private ComputeShader transferIntsCompute;
     private ComputeShader mipFilterCompute;
+    private ComputeShader mergeVolumesCompute;
+    private ComputeShader sliceClearCompute;
+    private ComputeShader scrollVolumeCompute;
     private Camera voxelCamera;
     private GameObject voxelCameraGameObject;
     private GameObject leftViewPoint;
@@ -194,6 +196,32 @@ public class SEGIStationeers : MonoBehaviour
     private Vector3 voxelSpaceOrigin;
     private Vector3 previousVoxelSpaceOrigin;
     private Vector3 voxelSpaceOriginDelta;
+
+    private RenderTexture geometryCacheVolume;   // RInt, 256x3
+    private RenderTexture geometryCacheCopy;     // RInt, 256x3
+    private bool _cacheNeedsFullRefresh = true;
+    private bool _hybridCacheReady = false;
+
+    private const int GEOM_BATCH_COUNT = 8;
+    private struct RendererWeight
+    {
+        public Renderer renderer;
+        public int triangles;
+    }
+    private List<RendererWeight> _weightedRenderers = new();
+    private List<RendererWeight> _geomBuildBuffer = new();
+    private readonly List<Renderer>[] _geomBatches = new List<Renderer>[GEOM_BATCH_COUNT];
+    private readonly int[] _batchWeights = new int[GEOM_BATCH_COUNT];
+    private int _currentBuildBatch = 0;
+    private bool _buildCycleActive = false;
+    private float _lastGeomCacheUpdate = 0f;
+    private Coroutine _geomCacheCoroutine;
+    private bool _geomBatchesReady = false;
+
+    private int _sunDepthRefreshInterval = 120;
+    private int _sunDepthCounter = 0;
+    private bool _sunDepthDirty = true;
+    private Vector3 _lastSunDirection = Vector3.down;
     private Quaternion rotationFront = new(0.0f, 0.0f, 0.0f, 1.0f);
     private Quaternion rotationLeft = new(0.0f, 0.7f, 0.0f, 0.7f);
     private Quaternion rotationTop = new(0.7f, 0.0f, 0.0f, 0.7f);
@@ -206,7 +234,6 @@ public class SEGIStationeers : MonoBehaviour
     private float _lastEmissiveCacheUpdate = 0f;
     private Coroutine _emissiveCacheCoroutine;
 
-    // Robot fix
     private readonly HashSet<int> _fixedRobotMaterialIds = new();
     private bool _robotFixEventHooked;
     private Coroutine _robotFixCoroutine;
@@ -228,7 +255,6 @@ public class SEGIStationeers : MonoBehaviour
     }
 
     public SystemSupported systemSupported;
-
 
     public struct SystemSupported : IEquatable<SystemSupported>
     {
@@ -286,25 +312,43 @@ public class SEGIStationeers : MonoBehaviour
     private void OnEnable()
     {
         notReadyToRender = true;
-        InitCheck();
-        ResizeRenderTextures();
-        CheckSupport();
-        UnityEngine.SceneManagement.SceneManager.sceneLoaded -= OnSceneLoaded;
-        UnityEngine.SceneManagement.SceneManager.sceneLoaded += OnSceneLoaded;
-        StartRobotEmissionFix();
-        notReadyToRender = false;
+        try
+        {
+            InitCheck();
+            ResizeRenderTextures();
+            CheckSupport();
+            UnityEngine.SceneManagement.SceneManager.sceneLoaded -= OnSceneLoaded;
+            UnityEngine.SceneManagement.SceneManager.sceneLoaded += OnSceneLoaded;
+            StartRobotEmissionFix();
+            notReadyToRender = false;
+        }
+        catch (Exception ex)
+        {
+            SEGIPlugin.Log.LogError($"SEGI Plus OnEnable failed: {ex.Message}");
+            notReadyToRender = true;
+            initalized = false;
+        }
     }
 
     private void OnDisable()
     {
         notReadyToRender = true;
         UnityEngine.SceneManagement.SceneManager.sceneLoaded -= OnSceneLoaded;
-        Cleanup();
+        try
+        {
+            Cleanup();
+        }
+        catch (Exception ex)
+        {
+            SEGIPlugin.Log.LogError($"SEGI Plus OnDisable cleanup error: {ex.Message}");
+            initalized = false;
+        }
     }
 
     private void Update()
     {
         if (notReadyToRender) return;
+        if (bypassRendering) return;
 
         if (previousGIResult == null) ResizeRenderTextures();
 
@@ -344,6 +388,8 @@ public class SEGIStationeers : MonoBehaviour
 
     private void OnPreRender()
     {
+        if (bypassRendering) return;
+
         if (!voxelCamera || !shadowCamera) initalized = false;
 
         InitCheck();
@@ -419,7 +465,7 @@ public class SEGIStationeers : MonoBehaviour
                 origin = followTransform.position;
             else
                 //GI is still flickering a bit when the scene view and the game view are opened at the same time
-                origin = transform.position + transform.forward * adaptiveVoxelSpaceSize / 4.0f;
+                    origin = transform.position + transform.forward * adaptiveVoxelSpaceSize / 4.0f;
 
             //Lock the voxel volume origin based on the interval
             voxelSpaceOrigin = new Vector3(Mathf.Round(origin.x / interval) * interval,
@@ -500,11 +546,25 @@ public class SEGIStationeers : MonoBehaviour
 
             var sunAboveHorizon = sun != null && Vector3.Dot(-sun.transform.forward, Vector3.up) > 0f;
 
-            if (sunAboveHorizon)
+                    var currentSunDirection = sun != null ? -sun.transform.forward : Vector3.down;
+            _sunDepthCounter++;
+            bool shouldRefreshSun = _sunDepthDirty
+                || _sunDepthCounter >= _sunDepthRefreshInterval
+                || _cacheNeedsFullRefresh
+                || Vector3.Angle(_lastSunDirection, currentSunDirection) > 0.5f;
+
+            if (sunAboveHorizon && shouldRefreshSun)
             {
                 Graphics.SetRenderTarget(sunDepthTexture);
                 shadowCamera.SetTargetBuffers(sunDepthTexture.colorBuffer, sunDepthTexture.depthBuffer);
                 shadowCamera.RenderWithShader(sunDepthShader, "");
+                _sunDepthCounter = 0;
+                _sunDepthDirty = false;
+                _lastSunDirection = currentSunDirection;
+            }
+
+            if (sunAboveHorizon)
+            {
                 Shader.SetGlobalTexture("SEGISunDepth", sunDepthTexture);
                 Shader.SetGlobalColor("GISunColor", sun != null ? sun.color : Color.black);
             }
@@ -515,18 +575,25 @@ public class SEGIStationeers : MonoBehaviour
                 Graphics.SetRenderTarget(sunDepthTexture);
                 GL.Clear(true, true, Color.black);
                 Shader.SetGlobalTexture("SEGISunDepth", sunDepthTexture);
+                _sunDepthDirty = true;
             }
 
-            clearCompute.SetTexture(0, "RG0", integerVolume);
-            clearCompute.SetInt("Res", adaptiveVoxelResolution);
-            clearCompute.Dispatch(0, Mathf.CeilToInt((float)adaptiveVoxelResolution / 4f),
-                Mathf.CeilToInt((float)adaptiveVoxelResolution / 4f),
-                Mathf.CeilToInt((float)adaptiveVoxelResolution / 4f));
-
-            // LogRenderingLayers();
+            if (!_cacheNeedsFullRefresh && _hybridCacheReady
+                && (Mathf.Abs(voxelSpaceOriginDelta.x) > 0.001f
+                    || Mathf.Abs(voxelSpaceOriginDelta.y) > 0.001f
+                    || Mathf.Abs(voxelSpaceOriginDelta.z) > 0.001f))
+            {
+                ScrollGeometryCache();
+            }
 
             if (ConfigData.LightweightMode)
             {
+                clearCompute.SetTexture(0, "RG0", integerVolume);
+                clearCompute.SetInt("Res", adaptiveVoxelResolution);
+                clearCompute.Dispatch(0, Mathf.CeilToInt((float)adaptiveVoxelResolution / 4f),
+                    Mathf.CeilToInt((float)adaptiveVoxelResolution / 4f),
+                    Mathf.CeilToInt((float)adaptiveVoxelResolution / 4f));
+
                 UpdateEmissiveCache();
 
                 Graphics.SetRandomWriteTarget(1, integerVolume);
@@ -543,10 +610,13 @@ public class SEGIStationeers : MonoBehaviour
                                 r.gameObject.layer = tempLayer;
                             }
                         }
+
                     var originalMask = voxelCamera.cullingMask;
                     voxelCamera.cullingMask = 1 << tempLayer;
                     voxelCamera.allowHDR = true;
+
                     voxelCamera.RenderWithShader(voxelizationShader, "");
+
                     voxelCamera.cullingMask = originalMask;
                 foreach (var kvp in _layerRestoreCache)
                     {
@@ -554,25 +624,135 @@ public class SEGIStationeers : MonoBehaviour
                                 kvp.Key.layer = kvp.Value;
                         }
                     Graphics.ClearRandomWriteTargets();
+
+                int lwTransferGroups = Mathf.CeilToInt((float)adaptiveVoxelResolution / 4f);
+                transferIntsCompute.SetTexture(0, "Result", activeVolume);
+                transferIntsCompute.SetTexture(0, "PrevResult", previousActiveVolume);
+                transferIntsCompute.SetTexture(0, "RG0", integerVolume);
+                transferIntsCompute.SetInt("VoxelAA", adaptiveVoxelAA ? 1 : 0);
+                transferIntsCompute.SetInt("Resolution", adaptiveVoxelResolution);
+                transferIntsCompute.SetVector("VoxelOriginDelta",
+                    voxelSpaceOriginDelta / adaptiveVoxelSpaceSize * adaptiveVoxelResolution);
+                transferIntsCompute.Dispatch(0, lwTransferGroups, lwTransferGroups, lwTransferGroups);
             }
             else
             {
-                Graphics.SetRandomWriteTarget(1, integerVolume);
-                voxelCamera.targetTexture = dummyVoxelTextureAAScaled;
-                voxelCamera.RenderWithShader(voxelizationShaderBeefEdit, "");
-                Graphics.ClearRandomWriteTargets();
-            }
 
-            transferIntsCompute.SetTexture(0, "Result", activeVolume);
-            transferIntsCompute.SetTexture(0, "PrevResult", previousActiveVolume);
-            transferIntsCompute.SetTexture(0, "RG0", integerVolume);
-            transferIntsCompute.SetInt("VoxelAA", adaptiveVoxelAA ? 1 : 0);
-            transferIntsCompute.SetInt("Resolution", adaptiveVoxelResolution);
-            transferIntsCompute.SetVector("VoxelOriginDelta",
-                voxelSpaceOriginDelta / adaptiveVoxelSpaceSize * adaptiveVoxelResolution);
-            transferIntsCompute.Dispatch(0, Mathf.CeilToInt((float)adaptiveVoxelResolution / 4f),
-                Mathf.CeilToInt((float)adaptiveVoxelResolution / 4f),
-                Mathf.CeilToInt((float)adaptiveVoxelResolution / 4f));
+                UpdateGeomRendererCache();
+
+                Shader.SetGlobalInt("SEGISliceMin", 0);
+                Shader.SetGlobalInt("SEGISliceMax", adaptiveVoxelResolution);
+
+                if (_cacheNeedsFullRefresh && _geomBatchesReady)
+                {
+                    _cacheNeedsFullRefresh = false;
+                    _buildCycleActive = true;
+                    _currentBuildBatch = 0;
+                }
+
+                if (_buildCycleActive && _geomBatchesReady)
+                {
+                    int batchIdx = _currentBuildBatch;
+
+                    if (batchIdx == 0)
+                    {
+                            int clearGroups = Mathf.CeilToInt((float)adaptiveVoxelResolution / 4f);
+                        clearCompute.SetTexture(0, "RG0", geometryCacheCopy);
+                        clearCompute.SetInt("Res", adaptiveVoxelResolution);
+                        clearCompute.Dispatch(0, clearGroups, clearGroups, clearGroups);
+                    }
+
+                    if (batchIdx < GEOM_BATCH_COUNT && _geomBatches[batchIdx].Count > 0)
+                    {
+                            const int tempLayer = 31;
+                        _layerRestoreCache.Clear();
+                        var batch = _geomBatches[batchIdx];
+                        for (int i = batch.Count - 1; i >= 0; i--)
+                        {
+                            var r = batch[i];
+                            if (r == null || !r)
+                            {
+                                batch.RemoveAt(i); // Clean dead refs
+                                continue;
+                            }
+                            if (r.gameObject.layer != tempLayer)
+                            {
+                                _layerRestoreCache[r.gameObject] = r.gameObject.layer;
+                                r.gameObject.layer = tempLayer;
+                            }
+                        }
+
+                        var originalMask = voxelCamera.cullingMask;
+                        voxelCamera.cullingMask = 1 << tempLayer;
+
+                        Graphics.SetRandomWriteTarget(1, geometryCacheCopy);
+                        voxelCamera.targetTexture = dummyVoxelTextureAAScaled;
+                        voxelCamera.RenderWithShader(voxelizationShaderBeefEdit, "");
+                        Graphics.ClearRandomWriteTargets();
+
+                        voxelCamera.cullingMask = originalMask;
+                        foreach (var kvp in _layerRestoreCache)
+                        {
+                            if (kvp.Key != null)
+                                kvp.Key.layer = kvp.Value;
+                        }
+                    }
+
+                    _currentBuildBatch++;
+
+                    if (_currentBuildBatch >= GEOM_BATCH_COUNT)
+                    {
+                        (geometryCacheVolume, geometryCacheCopy) = (geometryCacheCopy, geometryCacheVolume);
+                        _hybridCacheReady = true;
+                        _currentBuildBatch = 0;
+                    }
+                }
+
+                UpdateEmissiveCache();
+
+                clearCompute.SetTexture(0, "RG0", integerVolume);
+                clearCompute.SetInt("Res", adaptiveVoxelResolution);
+                int emClearGroups = Mathf.CeilToInt((float)adaptiveVoxelResolution / 4f);
+                clearCompute.Dispatch(0, emClearGroups, emClearGroups, emClearGroups);
+
+                var emissiveRenderersToUse = GetEmissiveRenderers();
+                if (emissiveRenderersToUse.Count > 0)
+                {
+                    const int tempLayer = 31;
+                    _layerRestoreCache.Clear();
+                    foreach (var r in emissiveRenderersToUse)
+                    {
+                        if (r != null && r.gameObject.layer != tempLayer)
+                        {
+                            _layerRestoreCache[r.gameObject] = r.gameObject.layer;
+                            r.gameObject.layer = tempLayer;
+                        }
+                    }
+
+                    var originalMask = voxelCamera.cullingMask;
+                    voxelCamera.cullingMask = 1 << tempLayer;
+
+                    Graphics.SetRandomWriteTarget(1, integerVolume);
+                    voxelCamera.targetTexture = dummyVoxelTextureAAScaled;
+                    voxelCamera.RenderWithShader(voxelizationEmissiveOnlyShader, "");
+                    Graphics.ClearRandomWriteTargets();
+
+                    voxelCamera.cullingMask = originalMask;
+                    foreach (var kvp in _layerRestoreCache)
+                    {
+                        if (kvp.Key != null)
+                            kvp.Key.layer = kvp.Value;
+                    }
+                }
+
+                int mergeGroups = Mathf.CeilToInt((float)adaptiveVoxelResolution / 16f);
+                mergeVolumesCompute.SetTexture(0, "Result", activeVolume);
+                mergeVolumesCompute.SetTexture(0, "GeometryCache", geometryCacheVolume);
+                mergeVolumesCompute.SetTexture(0, "EmissiveVolume", integerVolume);
+                mergeVolumesCompute.SetInt("Resolution", adaptiveVoxelResolution);
+                mergeVolumesCompute.SetInt("VoxelAA", adaptiveVoxelAA ? 1 : 0);
+                mergeVolumesCompute.Dispatch(0, mergeGroups, mergeGroups, 1);
+            }
 
             //Manually filter/render mip maps
             Shader.SetGlobalTexture("SEGIVolumeLevel0", activeVolume);
@@ -586,9 +766,8 @@ public class SEGIStationeers : MonoBehaviour
                 mipFilterCompute.SetTexture(MipFilterKernel, "Source", source);
                 mipFilterCompute.SetTexture(MipFilterKernel, "Destination", volumeTextures[i + 1]);
 
-                // Optimized dispatch - use 8x8 thread groups for better occupancy
                 var mipThreadGroups = Mathf.CeilToInt((float)destinationRes / 8.0f);
-                mipFilterCompute.Dispatch(MipFilterKernel, mipThreadGroups, mipThreadGroups, mipThreadGroups);
+                mipFilterCompute.Dispatch(MipFilterKernel, mipThreadGroups, mipThreadGroups, 1);
                 Shader.SetGlobalTexture(MipLevelNames[i], volumeTextures[i + 1]);
             }
 
@@ -601,7 +780,7 @@ public class SEGIStationeers : MonoBehaviour
         else if (renderState == RenderState.Bounce)
         {
             //Clear the volume texture that is immediately written to in the voxelization scene shader
-            clearCompute.SetTexture(0, "RG0", integerVolume);
+                clearCompute.SetTexture(0, "RG0", integerVolume);
             var bounceThreadGroups = Mathf.CeilToInt((float)adaptiveVoxelResolution / 4.0f);
             clearCompute.Dispatch(0, bounceThreadGroups, bounceThreadGroups, bounceThreadGroups);
 
@@ -612,14 +791,16 @@ public class SEGIStationeers : MonoBehaviour
             //Render the scene from the voxel camera object with the voxel tracing shader to render a bounce of GI into the irradiance volume
             Graphics.SetRandomWriteTarget(1, integerVolume);
             voxelCamera.targetTexture = dummyVoxelTextureFixed;
+
             voxelCamera.RenderWithShader(voxelTracingShaderBeefEdit, "");
+
             Graphics.ClearRandomWriteTargets();
 
-            //Transfer the data from the volume integer texture to the irradiance volume texture. This result is added to the next main voxelization pass to create a feedback loop for infinite bounces
+            int bounceTransferGroups = Mathf.CeilToInt((float)adaptiveVoxelResolution / 4f);
             transferIntsCompute.SetTexture(1, "Result", secondaryIrradianceVolume);
             transferIntsCompute.SetTexture(1, "RG0", integerVolume);
             transferIntsCompute.SetInt("Resolution", adaptiveVoxelResolution);
-            transferIntsCompute.Dispatch(1, bounceThreadGroups, bounceThreadGroups, bounceThreadGroups);
+            transferIntsCompute.Dispatch(1, bounceTransferGroups, bounceTransferGroups, bounceTransferGroups);
             Shader.SetGlobalTexture("SEGIVolumeTexture1", secondaryIrradianceVolume);
 
             renderState = RenderState.Voxelize;
@@ -628,10 +809,50 @@ public class SEGIStationeers : MonoBehaviour
         RenderTexture.active = previousActive;
     }
 
+    private bool _wasBypassed = false;
+
     [ImageEffectOpaque]
     private void OnRenderImage(RenderTexture source, RenderTexture destination)
     {
-        if (notReadyToRender)
+        if (bypassRendering)
+        {
+            Graphics.Blit(source, destination);
+            _wasBypassed = true;
+            return;
+        }
+
+        // Coming back from bypass: clear previousGIResult so temporal blend
+        // doesn't start from stale/black data causing a black screen
+        if (_wasBypassed)
+        {
+            _wasBypassed = false;
+            if (previousGIResult != null)
+            {
+                RenderTexture prev = RenderTexture.active;
+                RenderTexture.active = previousGIResult;
+                GL.Clear(true, true, Color.clear);
+                RenderTexture.active = prev;
+            }
+            // Force all cached shader params to refresh
+            _cachedGIGain = -999f;
+            _cachedNearLightGain = -999f;
+            _cachedSecondaryBounceGain = -999f;
+            _cachedTraceLength = -999f;
+            _cachedConeWidth = -999f;
+            _cachedOcclusionStrength = -999f;
+            _cachedOcclusionPower = -999f;
+            _cachedConeTraceBias = -999f;
+            _cachedNearOcclusionStrength = -999f;
+            _cachedFarOcclusionStrength = -999f;
+            _cachedFarthestOcclusionStrength = -999f;
+            _cachedBlendWeight = -999f;
+            _cachedInnerOcclusionLayers = -999;
+            _cachedAdaptiveCones = -999;
+            _cachedAdaptiveConeTraceSteps = -999;
+            _cachedAdaptiveHalfRes = -999;
+        }
+
+        if (notReadyToRender || material == null)
         {
             Graphics.Blit(source, destination);
             return;
@@ -729,6 +950,7 @@ public class SEGIStationeers : MonoBehaviour
         //Get the camera depth and normals
         Graphics.Blit(source, currentDepth, material, Pass.GetCameraDepthTexture);
         material.SetTexture("CurrentDepth", currentDepth);
+
         Graphics.Blit(source, currentNormal, material, Pass.GetWorldNormals);
         material.SetTexture("CurrentNormal", currentNormal);
 
@@ -759,13 +981,13 @@ public class SEGIStationeers : MonoBehaviour
         {
             RenderTexture.ReleaseTemporary(gi1);
             //Setup temporary textures
-            var gi3 =
+                var gi3 =
                 RenderTexture.GetTemporary(source.width, source.height, 0, RenderTextureFormat.ARGBHalf);
             var gi4 =
                 RenderTexture.GetTemporary(source.width, source.height, 0, RenderTextureFormat.ARGBHalf);
 
             //Prepare the half-resolution diffuse GI result to be bilaterally upsampled
-            gi2.filterMode = FilterMode.Point;
+                gi2.filterMode = FilterMode.Point;
             Graphics.Blit(gi2, gi4);
             RenderTexture.ReleaseTemporary(gi2);
             gi4.filterMode = FilterMode.Point;
@@ -860,8 +1082,12 @@ public class SEGIStationeers : MonoBehaviour
         mipFilterCompute = Bundle.LoadAsset<ComputeShader>("SEGIMipFilter");
         voxelizationShader = Bundle.LoadAsset<Shader>("SEGIVoxelizeScene");
         voxelizationShaderBeefEdit = SegiBeefEdit.LoadAsset<Shader>("SEGIVoxelizeSceneBeefEdit");
+        voxelizationEmissiveOnlyShader = SegiBeefEdit.LoadAsset<Shader>("SEGIVoxelizeEmissiveOnlyBeefEdit");
         voxelTracingShader = SegiBeefEdit.LoadAsset<Shader>("SEGITraceScene");
         voxelTracingShaderBeefEdit = SegiBeefEdit.LoadAsset<Shader>("SEGITraceSceneBeefEdit");
+        mergeVolumesCompute = SegiBeefEdit.LoadAsset<ComputeShader>("SEGIMergeVolumesBeefEdit");
+        sliceClearCompute = SegiBeefEdit.LoadAsset<ComputeShader>("SEGISliceClearBeefEdit");
+        scrollVolumeCompute = SegiBeefEdit.LoadAsset<ComputeShader>("SEGIScrollVolumeBeefEdit");
         material = new Material(Bundle.LoadAsset<Shader>("SEGI"))
         {
             hideFlags = HideFlags.HideAndDontSave
@@ -967,6 +1193,18 @@ public class SEGIStationeers : MonoBehaviour
         previousVoxelSpaceOrigin = Vector3.zero;
         voxelSpaceOriginDelta = Vector3.zero;
 
+        _cacheNeedsFullRefresh = true;
+        _hybridCacheReady = false;
+        _currentBuildBatch = 0;
+        _buildCycleActive = false;
+        _geomBatchesReady = false;
+        _lastGeomCacheUpdate = 0f;
+        for (int i = 0; i < GEOM_BATCH_COUNT; i++)
+            _geomBatches[i] ??= new List<Renderer>();
+        _sunDepthDirty = true;
+        _sunDepthCounter = 0;
+        _lastSunDirection = Vector3.down;
+
         frameTimeHistory = new Queue<float>();
         frameTimeSum = 0f;
         currentAdaptiveScale = 1.0f;
@@ -1056,6 +1294,12 @@ public class SEGIStationeers : MonoBehaviour
         _culledEmissiveRenderers.Clear();
         _lastEmissiveCacheUpdate = 0f;
         _lastSpatialCullUpdate = 0f;
+
+        _cacheNeedsFullRefresh = true;
+        _hybridCacheReady = false;
+        _currentBuildBatch = 0;
+        _buildCycleActive = false;
+        _geomBatchesReady = false;
     }
 
     private Matrix4x4 TransformViewMatrix(Matrix4x4 mat)
@@ -1229,6 +1473,115 @@ public class SEGIStationeers : MonoBehaviour
     {
         if (_robotFixCoroutine != null) return;
         _robotFixCoroutine = StartCoroutine(RobotEmissionFixCoroutine());
+    }
+
+    private static int GetRendererTriangleCount(Renderer r)
+    {
+        Mesh mesh = null;
+        if (r is SkinnedMeshRenderer smr)
+            mesh = smr.sharedMesh;
+        else
+        {
+            var mf = r.GetComponent<MeshFilter>();
+            if (mf != null) mesh = mf.sharedMesh;
+        }
+        if (mesh == null) return 0;
+
+        int totalIndices = 0;
+        for (int i = 0; i < mesh.subMeshCount; i++)
+            totalIndices += (int)mesh.GetIndexCount(i);
+        return totalIndices / 3;
+    }
+
+    private void BuildBalancedBatches()
+    {
+        _weightedRenderers.Sort((a, b) => b.triangles.CompareTo(a.triangles));
+
+        for (int i = 0; i < GEOM_BATCH_COUNT; i++)
+        {
+            _geomBatches[i] ??= new List<Renderer>();
+            _geomBatches[i].Clear();
+            _batchWeights[i] = 0;
+        }
+
+        foreach (var rw in _weightedRenderers)
+        {
+            int lightest = 0;
+            for (int i = 1; i < GEOM_BATCH_COUNT; i++)
+            {
+                if (_batchWeights[i] < _batchWeights[lightest])
+                    lightest = i;
+            }
+            _geomBatches[lightest].Add(rw.renderer);
+            _batchWeights[lightest] += rw.triangles;
+        }
+
+        int totalTris = 0;
+        for (int i = 0; i < GEOM_BATCH_COUNT; i++)
+            totalTris += _batchWeights[i];
+
+    }
+
+    private void UpdateGeomRendererCache()
+    {
+        if (Time.time - _lastGeomCacheUpdate < 2.0f || _geomCacheCoroutine != null)
+            return;
+        _geomCacheCoroutine = StartCoroutine(UpdateGeomRendererCacheCoroutine());
+    }
+
+    private IEnumerator UpdateGeomRendererCacheCoroutine()
+    {
+        _geomBuildBuffer.Clear();
+        float frameStartTime = Time.realtimeSinceStartup * 1000f;
+        var allRenderers = FindObjectsByType<Renderer>(FindObjectsSortMode.None);
+
+        float halfSize = adaptiveVoxelSpaceSize * 0.75f;
+        Vector3 voxelMin = voxelSpaceOrigin - Vector3.one * halfSize;
+        Vector3 voxelMax = voxelSpaceOrigin + Vector3.one * halfSize;
+
+        const int SCAN_BATCH_SIZE = 100;
+        for (int i = 0; i < allRenderers.Length; i += SCAN_BATCH_SIZE)
+        {
+            int endIndex = Mathf.Min(i + SCAN_BATCH_SIZE, allRenderers.Length);
+            for (int j = i; j < endIndex; j++)
+            {
+                var r = allRenderers[j];
+                if (r == null || !r || r.gameObject == null || !r.gameObject.activeInHierarchy)
+                    continue;
+
+                if ((giCullingMask & (1 << r.gameObject.layer)) == 0) continue;
+
+                var bounds = r.bounds;
+                if (bounds.max.x < voxelMin.x || bounds.min.x > voxelMax.x ||
+                    bounds.max.y < voxelMin.y || bounds.min.y > voxelMax.y ||
+                    bounds.max.z < voxelMin.z || bounds.min.z > voxelMax.z)
+                    continue;
+
+                int triCount = GetRendererTriangleCount(r);
+                if (triCount > 0)
+                    _geomBuildBuffer.Add(new RendererWeight { renderer = r, triangles = triCount });
+            }
+
+            // Yield if we've spent too long this frame
+            if (Time.realtimeSinceStartup * 1000f - frameStartTime > 0.3f)
+            {
+                yield return null;
+                frameStartTime = Time.realtimeSinceStartup * 1000f;
+            }
+        }
+
+        (_weightedRenderers, _geomBuildBuffer) = (_geomBuildBuffer, _weightedRenderers);
+        BuildBalancedBatches();
+
+        _geomBatchesReady = true;
+        if (!_buildCycleActive && !_cacheNeedsFullRefresh)
+        {
+            _buildCycleActive = true;
+            _currentBuildBatch = 0;
+        }
+
+        _lastGeomCacheUpdate = Time.time;
+        _geomCacheCoroutine = null;
     }
 
     private IEnumerator RobotEmissionFixCoroutine()
@@ -1443,6 +1796,39 @@ public class SEGIStationeers : MonoBehaviour
         integerVolume.Create();
         integerVolume.hideFlags = HideFlags.HideAndDontSave;
 
+        if (geometryCacheVolume) CleanupTexture(ref geometryCacheVolume);
+
+        geometryCacheVolume = new RenderTexture(adaptiveVoxelResolution, adaptiveVoxelResolution, 0,
+            RenderTextureFormat.RInt, RenderTextureReadWrite.Linear)
+        {
+            dimension = TextureDimension.Tex3D,
+            volumeDepth = adaptiveVoxelResolution,
+            enableRandomWrite = true,
+            filterMode = FilterMode.Point,
+            hideFlags = HideFlags.HideAndDontSave
+        };
+        geometryCacheVolume.Create();
+        geometryCacheVolume.hideFlags = HideFlags.HideAndDontSave;
+
+        if (geometryCacheCopy) CleanupTexture(ref geometryCacheCopy);
+
+        geometryCacheCopy = new RenderTexture(adaptiveVoxelResolution, adaptiveVoxelResolution, 0,
+            RenderTextureFormat.RInt, RenderTextureReadWrite.Linear)
+        {
+            dimension = TextureDimension.Tex3D,
+            volumeDepth = adaptiveVoxelResolution,
+            enableRandomWrite = true,
+            filterMode = FilterMode.Point,
+            hideFlags = HideFlags.HideAndDontSave
+        };
+        geometryCacheCopy.Create();
+        geometryCacheCopy.hideFlags = HideFlags.HideAndDontSave;
+
+        _cacheNeedsFullRefresh = true;
+        _hybridCacheReady = false;
+        _currentBuildBatch = 0;
+        _buildCycleActive = false;
+
         ResizeDummyTexture();
 
         var voxelCameraResolution = DummyVoxelResolution;
@@ -1524,6 +1910,8 @@ public class SEGIStationeers : MonoBehaviour
         CleanupTexture(ref previousGIResult);
         CleanupTexture(ref previousCameraDepth);
         CleanupTexture(ref integerVolume);
+        CleanupTexture(ref geometryCacheVolume);
+        CleanupTexture(ref geometryCacheCopy);
 
         if (volumeTextures != null)
             for (var i = 0; i < volumeTextures.Length; i++)
@@ -1544,6 +1932,11 @@ public class SEGIStationeers : MonoBehaviour
             StopCoroutine(_emissiveCacheCoroutine);
             _emissiveCacheCoroutine = null;
         }
+        if (_geomCacheCoroutine != null)
+        {
+            StopCoroutine(_geomCacheCoroutine);
+            _geomCacheCoroutine = null;
+        }
         try
         {
             Shader.SetGlobalTexture("SEGIVolumeLevel0", null);
@@ -1561,12 +1954,24 @@ public class SEGIStationeers : MonoBehaviour
         }
 
         CleanupCaches();
+
         DestroyImmediate(material);
+        material = null;
 
         DestroyImmediate(voxelCameraGameObject);
+        voxelCameraGameObject = null;
+        voxelCamera = null;
+
         DestroyImmediate(leftViewPoint);
+        leftViewPoint = null;
+
         DestroyImmediate(topViewPoint);
+        topViewPoint = null;
+
         DestroyImmediate(shadowCameraGameObject);
+        shadowCameraGameObject = null;
+        shadowCamera = null;
+        shadowCameraTransform = null;
 
         initalized = false;
         CleanupTextures();
@@ -1590,6 +1995,38 @@ public class SEGIStationeers : MonoBehaviour
         _culledEmissiveRenderers.Clear();
     }
 
+    private void ScrollGeometryCache()
+    {
+        Vector3 voxelDelta = voxelSpaceOriginDelta / adaptiveVoxelSpaceSize * adaptiveVoxelResolution;
+        int3Offset scrollOffset = new int3Offset(
+            Mathf.RoundToInt(voxelDelta.x),
+            Mathf.RoundToInt(voxelDelta.y),
+            Mathf.RoundToInt(voxelDelta.z));
+
+        if (scrollOffset.x == 0 && scrollOffset.y == 0 && scrollOffset.z == 0)
+            return;
+
+        Graphics.CopyTexture(geometryCacheVolume, geometryCacheCopy);
+
+        int scrollGroups = Mathf.CeilToInt((float)adaptiveVoxelResolution / 16f);
+        scrollVolumeCompute.SetTexture(0, "Source", geometryCacheCopy);
+        scrollVolumeCompute.SetTexture(0, "Destination", geometryCacheVolume);
+        scrollVolumeCompute.SetInts("ScrollOffset", scrollOffset.x, scrollOffset.y, scrollOffset.z);
+        scrollVolumeCompute.SetInt("Resolution", adaptiveVoxelResolution);
+        scrollVolumeCompute.Dispatch(0, scrollGroups, scrollGroups, 1);
+
+        if (_buildCycleActive)
+        {
+            _currentBuildBatch = 0;
+        }
+    }
+
+    private struct int3Offset
+    {
+        public int x, y, z;
+        public int3Offset(int x, int y, int z) { this.x = x; this.y = y; this.z = z; }
+    }
+
     private void OnSceneLoaded(UnityEngine.SceneManagement.Scene scene, UnityEngine.SceneManagement.LoadSceneMode mode)
     {
         initalized = false;
@@ -1602,6 +2039,19 @@ public class SEGIStationeers : MonoBehaviour
             StopCoroutine(_emissiveCacheCoroutine);
             _emissiveCacheCoroutine = null;
         }
+        if (_geomCacheCoroutine != null)
+        {
+            StopCoroutine(_geomCacheCoroutine);
+            _geomCacheCoroutine = null;
+        }
+
+        _cacheNeedsFullRefresh = true;
+        _hybridCacheReady = false;
+        _currentBuildBatch = 0;
+        _buildCycleActive = false;
+        _geomBatchesReady = false;
+        _lastGeomCacheUpdate = 0f;
+        _sunDepthDirty = true;
 
         CleanupRobotEmissionFix();
         StartRobotEmissionFix();

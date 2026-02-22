@@ -102,7 +102,7 @@ namespace BeefsSEGIPlus
         {
             if (SegiStationeersInstance != null)
             {
-                SegiStationeersInstance.enabled = Enabled.Value;
+                SegiStationeersInstance.bypassRendering = !Enabled.Value;
                 if (SegiStationeersInstance.sun == null)
                 {
                     try

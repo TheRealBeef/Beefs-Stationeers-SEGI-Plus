@@ -41,6 +41,13 @@ Built upon the work of:
 - **Vinus** (previous implementation): [https://github.com/TerameTechYT/StationeersSharp/tree/development/Source/SEGIMod](https://github.com/TerameTechYT/StationeersSharp/tree/development/Source/SEGIMod)
 
 ## Changelog
+>### Version 1.2.6:
+>- Non-emissive geometry now cached and re-used across frames. Scrolled with camera movement
+>- Scene geometry batched across 8 frames
+>- Emissive geometry is rendered per-frame and merged with cached non-emissive geometry
+>- Sun shadow geometry is updated every 120 frames instead of per-frame
+>- Fix issue disabling/re-enabling SEGI Plus in config menu
+
 >### Version 1.2.5:
 >- Minor performance improvements, primarily caching and reusing data where possible
 
