@@ -401,7 +401,7 @@ namespace BeefsSEGIPlus
         private static readonly float[] VoxelSpaceSizes = [16.0f, 16.0f, 32.0f, 32.0f];
         private static readonly float[] ShadowSpaceSizes = [12.0f, 12.0f, 24.0f, 24.0f];
         private static readonly bool[] UseBilateralFilteringLevels = [true, true, true, true];
-        private static readonly bool[] GaussianMipFilterLevels = [false, false, false, false];
+        private static readonly bool[] GaussianMipFilterLevels = [true, true, true, true];
         private static readonly bool[] InfiniteBouncesLevels = [false, false, false, false];
         private static readonly int[] ConesLevels = [4, 6, 8, 12];
         private static readonly int[] ConeTraceStepsLevels = [6, 8, 10, 14];

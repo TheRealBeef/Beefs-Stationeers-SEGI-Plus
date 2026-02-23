@@ -41,6 +41,9 @@ Built upon the work of:
 - **Vinus** (previous implementation): [https://github.com/TerameTechYT/StationeersSharp/tree/development/Source/SEGIMod](https://github.com/TerameTechYT/StationeersSharp/tree/development/Source/SEGIMod)
 
 ## Changelog
+>### Version 1.3.1:
+>- Hotfix to reduce artifacting/visual "snow"
+
 >### Version 1.3.0:
 >- Major performance improvements, likely you will want to revisit which settings you use
 >- Lightweight mode likely has little performance improvement when enabled, adaptive performance with reduce distance first strategy is likely the ideal for most cases

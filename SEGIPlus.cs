@@ -1088,10 +1088,19 @@ public class SEGIStationeers : MonoBehaviour
         //Perform bilateral filtering
         if (adaptiveBilateralFiltering && !Profiler.ShouldSkip("BilateralBlur"))
         {
+            // material.SetVector("Kernel", new Vector2(0.0f, 1.0f));
+            // Graphics.Blit(gi2, gi1, material, Pass.BilateralBlur);
+            // material.SetVector("Kernel", new Vector2(1.0f, 0.0f));
+            // Graphics.Blit(gi1, gi2, material, Pass.BilateralBlur);
+
             material.SetVector("Kernel", new Vector2(0.0f, 1.0f));
             Graphics.Blit(gi2, gi1, material, Pass.BilateralBlur);
             material.SetVector("Kernel", new Vector2(1.0f, 0.0f));
             Graphics.Blit(gi1, gi2, material, Pass.BilateralBlur);
+            // material.SetVector("Kernel", new Vector2(0.0f, 1.0f));
+            // Graphics.Blit(gi2, gi1, material, Pass.BilateralBlur);
+            // material.SetVector("Kernel", new Vector2(1.0f, 0.0f));
+            // Graphics.Blit(gi1, gi2, material, Pass.BilateralBlur);
         }
 
         //If Half Resolution tracing is enabled
