@@ -41,16 +41,16 @@ namespace BeefsSEGIPlus
         public static ConfigEntry<bool> Enabled;
         public static ConfigEntry<int> QualityLevel;
         public static ConfigEntry<float> SecondaryBounceGain;
-        public static ConfigEntry<float> NearLightGain;
+        public static ConfigEntry<float> EmissiveLightGain;
         public static ConfigEntry<float> GIGain;
-        public static ConfigEntry<float> DayAmbientBrightness;
-        public static ConfigEntry<float> NightAmbientBrightness;
         public static ConfigEntry<bool> LightweightMode;
         public static ConfigEntry<int> TargetFramerate;
         public static ConfigEntry<bool> AdaptivePerformance;
         public static ConfigEntry<int> AdaptiveStrategy;
         public static ConfigEntry<float> AdaptiveMinDistancePercent;
         public static ConfigEntry<bool> UseGainMultiplier;
+        public static ConfigEntry<bool> EmissiveBubbleEnabled;
+        public static ConfigEntry<bool> DenseVoxelMode;
 
         private static SEGIStationeers SegiStationeersInstance { get; set; }
 
@@ -180,24 +180,24 @@ namespace BeefsSEGIPlus
         private void BindAllConfigs()
         {
             Enabled = Config.Bind("General", "Enable (There is also F11 config menu in-game)", true, "Enable SEGI Plus global illumination. There is an F11 config menu in-game too");
-            UseGainMultiplier = Config.Bind("General", "Use x10 Gain Multiplier (applies to Global/Near/Secondary gains)", false, "Multiply all gain values by 10. Why? I dunno, but you can");
-            NearLightGain = Config.Bind("Gain Knobs", "Near Light Gain", 0.0f,
-                new ConfigDescription("Near light gain", new AcceptableValueRange<float>(0f, 2f)));
-            GIGain = Config.Bind("Gain Knobs", "Global Illumination Gain", 3.0f,
+            UseGainMultiplier = Config.Bind("General", "Use x10 Gain Multiplier (applies to Global/Emissive gains)", false, "Multiply GI and Emissive gain values by 10. Why? I dunno, but you can");
+            EmissiveLightGain = Config.Bind("Gain Knobs", "Emissive Light Gain", 2.0f,
+                new ConfigDescription("Multiplier for emissive light contribution during voxelization", new AcceptableValueRange<float>(0f, 10f)));
+            GIGain = Config.Bind("Gain Knobs", "Global Illumination Gain", 2.0f,
                 new ConfigDescription("Global illumination gain", new AcceptableValueRange<float>(0f, 8f)));
-            SecondaryBounceGain = Config.Bind("Gain Knobs", "Secondary Bounce Gain", 0.0f,
-                new ConfigDescription("Secondary bounce gain", new AcceptableValueRange<float>(0f, 2.0f)));
-            DayAmbientBrightness = Config.Bind("Lighting", "Day Ambient Brightness", 0.05f,
-                new ConfigDescription("Ambient light brightness during day", new AcceptableValueRange<float>(0.000f, 0.25f)));
-            NightAmbientBrightness = Config.Bind("Lighting", "Night Ambient Brightness", 0.0f,
-                new ConfigDescription("Ambient light brightness during night", new AcceptableValueRange<float>(0.000f, 0.01f)));
+            SecondaryBounceGain = Config.Bind("Gain Knobs", "Secondary Bounce Gain", 0.25f,
+                new ConfigDescription("Secondary bounce gain", new AcceptableValueRange<float>(0f, 0.75f)));
+            EmissiveBubbleEnabled = Config.Bind("Gain Knobs", "Emissive Exclusion Bubble", true,
+                "Prevents held items and suit from casting emissive light into the scene.");
             QualityLevel = Config.Bind("Performance", "Quality Level - 0 for Low, 3 for Extreme.", 1,
                 new ConfigDescription("Quality (0=Low, 1=Medium, 2=High, 3=Extreme)",
                     new AcceptableValueRange<int>(0, 3)));
+            DenseVoxelMode = Config.Bind("Performance", "High Density Mode", false,
+                "Finer GI detail at the cost of shorter range.");
             LightweightMode = Config.Bind("Performance", "**Lightweight Mode**", false,
-                "If you enable this it cull most objects except the emissive ones during voxelization and runs *way* faster, at the cost of light leakage. Can be combined with any quality setting.");
+                "If you enable this it cull most objects except the emissive ones during voxelization and runs *way* faster, at the cost of light leakage. Can be combined with any quality setting. Will be deprecated in a future update.");
             AdaptivePerformance = Config.Bind("Performance", "Adaptive Performance", false,
-                "Automatically adjusts settings to maintain framerate");
+                "Automatically adjusts settings to maintain framerate. Will be deprecated in a future update.");
             AdaptiveStrategy = Config.Bind("Performance", "Adaptive Strategy", 1,
                 new ConfigDescription("Adaptive Strategy (0=Balanced, 1=Reduce distance first)",
                     new AcceptableValueRange<int>(0, 1)));
@@ -399,27 +399,27 @@ namespace BeefsSEGIPlus
         private static readonly bool[] HalfResolutionLevels = [true, false, false, false];
         private static readonly bool[] VoxelAntiAliasingLevels = [false, false, true, true];
         private static readonly float[] VoxelSpaceSizes = [16.0f, 16.0f, 32.0f, 32.0f];
-        private static readonly float[] ShadowSpaceSizes = [12.0f, 12.0f, 24.0f, 24.0f];
-        private static readonly bool[] UseBilateralFilteringLevels = [true, true, true, true];
+        private static readonly float[] ShadowSpaceSizes = [24.0f, 24.0f, 48.0f, 48.0f];
         private static readonly bool[] GaussianMipFilterLevels = [true, true, true, true];
-        private static readonly bool[] InfiniteBouncesLevels = [false, false, false, false];
         private static readonly int[] ConesLevels = [4, 6, 8, 12];
         private static readonly int[] ConeTraceStepsLevels = [6, 8, 10, 14];
         private static readonly float[] ConeLengths = [1.0f, 1.0f, 1.0f, 1.0f];
         private static readonly float[] ConeWidths = [6.0f, 6.0f, 6.0f, 6.0f];
+        private static readonly int[] SunShadowResolutions = [256, 256, 512, 512];
         public static SEGIStationeers.VoxelResolution VoxelResolution => VoxelResolutions[CurrentQualityLevel];
         public static bool HalfResolution => HalfResolutionLevels[CurrentQualityLevel];
         public static bool VoxelAntiAliasing => VoxelAntiAliasingLevels[CurrentQualityLevel];
-        public static float VoxelSpaceSize => VoxelSpaceSizes[CurrentQualityLevel];
-        public static float ShadowSpaceSize => ShadowSpaceSizes[CurrentQualityLevel];
-        public static bool UseBilateralFiltering => UseBilateralFilteringLevels[CurrentQualityLevel];
+        public static bool DenseVoxelMode => SEGIPlugin.DenseVoxelMode?.Value ?? false;
+        private static float DenseScale => DenseVoxelMode ? 0.5f : 1.0f;
+        public static float VoxelSpaceSize => VoxelSpaceSizes[CurrentQualityLevel] * DenseScale;
+        public static float ShadowSpaceSize => ShadowSpaceSizes[CurrentQualityLevel] * DenseScale;
         public static bool GaussianMipFilter => GaussianMipFilterLevels[CurrentQualityLevel];
-        public static bool InfiniteBounces => InfiniteBouncesLevels[CurrentQualityLevel];
         public static int Cones => ConesLevels[CurrentQualityLevel];
         public static int ConeTraceSteps => ConeTraceStepsLevels[CurrentQualityLevel];
-        public static float ConeLength => ConeLengths[CurrentQualityLevel];
+        public static float ConeLength => ConeLengths[CurrentQualityLevel] * (DenseVoxelMode ? 1.5f : 1.0f);
         public static float ConeWidth => ConeWidths[CurrentQualityLevel];
-        public static float ConeTraceBias => 0.65f;
+        public static int SunShadowResolution => SunShadowResolutions[CurrentQualityLevel];
+        public static float ConeTraceBias => DenseVoxelMode ? 0.325f : 0.65f;
         public static float TemporalBlendWeight => 0.01f;
         public static float GIGain
         {
@@ -431,43 +431,36 @@ namespace BeefsSEGIPlus
             }
         }
 
-        public static float NearLightGain
+        public static float EmissiveLightGain
         {
             get
             {
-                float baseValue = SEGIPlugin.NearLightGain?.Value ?? 1.2f;
+                float baseValue = SEGIPlugin.EmissiveLightGain?.Value ?? 3.0f;
                 bool useMultiplier = SEGIPlugin.UseGainMultiplier?.Value ?? false;
                 return useMultiplier ? baseValue * 10f : baseValue;
             }
         }
+
+        public static bool EmissiveBubbleEnabled => SEGIPlugin.EmissiveBubbleEnabled?.Value ?? false;
 
         public static float SecondaryBounceGain
         {
             get
             {
-                float baseValue = SEGIPlugin.SecondaryBounceGain?.Value ?? 0.4f;
-                bool useMultiplier = SEGIPlugin.UseGainMultiplier?.Value ?? false;
-                return useMultiplier ? baseValue * 10f : baseValue;
+                return SEGIPlugin.SecondaryBounceGain?.Value ?? 0.4f;
             }
         }
         public static float OcclusionStrength => 0.86f;
-        public static float NearOcclusionStrength => 0.42f;
+        private static readonly float[] NearOcclusionStrengths = { 0.42f, 0.42f, 0.86f, 0.86f };
+        public static float NearOcclusionStrength => NearOcclusionStrengths[CurrentQualityLevel];
         public static float OcclusionPower => 1.0f;
         public static int InnerOcclusionLayers => 1;
         public static int SecondaryCones => 4;
         public static float SecondaryOcclusionStrength => 1.25f;
-        public static float FarOcclusionStrength => 0.75f;
-        public static float FarthestOcclusionStrength => 0.95f;
-        public static float DayAmbientBrightness => SEGIPlugin.DayAmbientBrightness?.Value ?? 0.15f;
-        public static float NightAmbientBrightness => SEGIPlugin.NightAmbientBrightness?.Value ?? 0.0f;
+        public static float FarOcclusionStrength => 0.86f;
+        public static float FarthestOcclusionStrength => 0.86f;
         public static bool LightweightMode => SEGIPlugin.LightweightMode?.Value ?? false;
-        public static bool StochasticSampling => true;
         public static int TargetFramerate => SEGIPlugin.TargetFramerate?.Value ?? 75;
-
-        // Unused
-        public static bool Enabled => SEGIPlugin.Enabled?.Value ?? false;
-        public static int ReflectionSteps => 0;
-        public static float ReflectionOcclusionPower => 0.0f;
 
         public static string GetQualityName()
         {
@@ -485,7 +478,7 @@ namespace BeefsSEGIPlus
             get
             {
                 int quality = SEGIPlugin.QualityLevel?.Value ?? 1;
-                return VoxelSpaceSizes[quality] * 0.5f; // Start at 50% of max
+                return VoxelSpaceSizes[quality] * DenseScale * 0.5f; // Start at 50% of max
             }
         }
         public static int AdaptiveStrategy => SEGIPlugin.AdaptiveStrategy?.Value ?? 0;
@@ -495,7 +488,6 @@ namespace BeefsSEGIPlus
         public static float AdaptiveRate => 0.05f;
         public static bool AdaptiveMaxHalfResolution => HalfResolutionLevels[CurrentQualityLevel];
         public static bool AdaptiveMaxVoxelAA => VoxelAntiAliasingLevels[CurrentQualityLevel];
-        public static bool AdaptiveMaxBilateralFiltering => UseBilateralFilteringLevels[CurrentQualityLevel];
         public static int AdaptiveMinVoxelRes => 64;
         public static int AdaptiveMinCones => 4;
         public static int AdaptiveMinConeTraceSteps => 6;
@@ -503,8 +495,8 @@ namespace BeefsSEGIPlus
         private static readonly float[] AdaptiveMinVoxelSpaceSizeMultipliers = { 0.5f, 0.25f };
         public static float GetAdaptiveMinVoxelSpaceSize(int strategy)
         {
-            float maxMaxDistance = VoxelSpaceSizes[3];
-            float currentMax = VoxelSpaceSizes[CurrentQualityLevel];
+            float maxMaxDistance = VoxelSpaceSizes[3] * DenseScale;
+            float currentMax = VoxelSpaceSizes[CurrentQualityLevel] * DenseScale;
 
             if (strategy == 1) // reduce dist first
             {
@@ -517,6 +509,11 @@ namespace BeefsSEGIPlus
                 float absoluteMinimum = maxMaxDistance * AdaptiveMinVoxelSpaceSizeMultipliers[0];
                 return Mathf.Min(absoluteMinimum, currentMax);
             }
+        }
+
+        public static float GetAdaptiveMaxVoxelSpaceSize(int strategy)
+        {
+            return VoxelSpaceSizes[CurrentQualityLevel] * DenseScale;
         }
 
         private static readonly float[] AdaptiveVoxelSpaceScaleThresholds = { 0.9f, 0.9f };
@@ -561,14 +558,5 @@ namespace BeefsSEGIPlus
         public static float GetAdaptiveBilateralOnThreshold(int strategy) => AdaptiveBilateralOnThresholds[strategy];
 
 
-        // public static float AdaptiveVoxelInterval3Threshold => 0.05f; // Use interval=3 below this
-        // public static float AdaptiveVoxelInterval2Threshold => 0.15f; // Use interval=2 below this
-        // public static float AdaptiveVoxelInterval1Threshold => 0.25f; // Use interval=1 above this
-        private static readonly float[] AdaptiveVoxelInterval3Thresholds = { -1f, -1f };
-        private static readonly float[] AdaptiveVoxelInterval2Thresholds = { -1f, -1f };
-        private static readonly float[] AdaptiveVoxelInterval1Thresholds = { -1f, -1f };
-        public static float GetAdaptiveVoxelInterval3Threshold(int strategy) => AdaptiveVoxelInterval3Thresholds[strategy];
-        public static float GetAdaptiveVoxelInterval2Threshold(int strategy) => AdaptiveVoxelInterval2Thresholds[strategy];
-        public static float GetAdaptiveVoxelInterval1Threshold(int strategy) => AdaptiveVoxelInterval1Thresholds[strategy];
     }
 }

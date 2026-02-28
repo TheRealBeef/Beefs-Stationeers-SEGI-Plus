@@ -158,23 +158,21 @@ public class ConfigMenu : MonoBehaviour
             GUILayout.Label($"Quality Level: {SEGIPlugin.QualityLevel.Value} ({ConfigData.GetQualityName()})");
             var newQualityLevel = Mathf.RoundToInt(GUILayout.HorizontalSlider(SEGIPlugin.QualityLevel.Value, 0, 3));
             if (newQualityLevel != SEGIPlugin.QualityLevel.Value) SEGIPlugin.QualityLevel.Value = newQualityLevel;
-            GUILayout.EndVertical();
 
-            GUILayout.Space(3);
+            if (SEGIPlugin.QualityLevel.Value >= 2)
+            {
+                GUILayout.Space(5);
+                var currentDense = SEGIPlugin.DenseVoxelMode.Value;
+                var newDense = GUILayout.Toggle(currentDense,
+                    $"High Density Mode ({(currentDense ? "ON" : "OFF")})");
+                if (newDense != currentDense) SEGIPlugin.DenseVoxelMode.Value = newDense;
+                GUILayout.TextArea("Twice the GI detail but half the range.", GUI.skin.box);
+            }
+            else if (SEGIPlugin.DenseVoxelMode.Value)
+            {
+                SEGIPlugin.DenseVoxelMode.Value = false;
+            }
 
-            GUILayout.BeginVertical(_blueBoxStyle);
-            GUILayout.Label("=== Day/Night Cycle ===", GUI.skin.box, GUILayout.ExpandWidth(true));
-            GUILayout.Label($"Day Ambient Brightness: {SEGIPlugin.DayAmbientBrightness.Value:F3}");
-            var newDayBrightness = GUILayout.HorizontalSlider(SEGIPlugin.DayAmbientBrightness.Value, 0.000f, 0.25f);
-            if (!Mathf.Approximately(newDayBrightness, SEGIPlugin.DayAmbientBrightness.Value))
-                SEGIPlugin.DayAmbientBrightness.Value = newDayBrightness;
-            GUILayout.TextArea("Controls how bright ambient lighting is during daytime (sun above horizon).\nHigher values make shadowed areas brighter.", GUI.skin.box);
-
-            GUILayout.Label($"Night Ambient Brightness: {SEGIPlugin.NightAmbientBrightness.Value:F4}");
-            var newNightBrightness = GUILayout.HorizontalSlider(SEGIPlugin.NightAmbientBrightness.Value, 0.000f, 0.01f);
-            if (!Mathf.Approximately(newNightBrightness, SEGIPlugin.NightAmbientBrightness.Value))
-                SEGIPlugin.NightAmbientBrightness.Value = newNightBrightness;
-            GUILayout.TextArea("Controls ambient lighting at night (sun below horizon). Keep low for realistic darkness.\nHigher values make shadowed areas brighter.", GUI.skin.box);
             GUILayout.EndVertical();
 
             GUILayout.Space(3);
@@ -230,25 +228,33 @@ public class ConfigMenu : MonoBehaviour
             var newGiGain = GUILayout.HorizontalSlider(SEGIPlugin.GIGain.Value, 0.0f, 8.0f);
             if (!Mathf.Approximately(newGiGain, SEGIPlugin.GIGain.Value)) SEGIPlugin.GIGain.Value = newGiGain;
             GUILayout.TextArea("Master brightness control for all global illumination effects.\nIncrease if lighting seems too dim.", GUI.skin.box);
-            GUILayout.Label($"Near Light Gain: {SEGIPlugin.NearLightGain.Value:F2}" +
-                            (SEGIPlugin.UseGainMultiplier.Value ? $" (Applied: {SEGIPlugin.NearLightGain.Value * giMultiplier:F2})" : ""));
-            var newNearLightGain = GUILayout.HorizontalSlider(SEGIPlugin.NearLightGain.Value, 0.0f, 2.0f);
-            if (!Mathf.Approximately(newNearLightGain, SEGIPlugin.NearLightGain.Value))
-                SEGIPlugin.NearLightGain.Value = newNearLightGain;
-            GUILayout.TextArea("Brightens lighting effects close to the camera.\nUseful for interior lighting.", GUI.skin.box);
-            GUILayout.Label($"Secondary Bounce Gain: {SEGIPlugin.SecondaryBounceGain.Value:F2}" +
-                            (SEGIPlugin.UseGainMultiplier.Value ? $" (Applied: {SEGIPlugin.SecondaryBounceGain.Value * giMultiplier:F2})" : ""));
-            var newSecondaryBounce = GUILayout.HorizontalSlider(SEGIPlugin.SecondaryBounceGain.Value, 0.0f, 2.0f);
-            if (!Mathf.Approximately(newSecondaryBounce, SEGIPlugin.SecondaryBounceGain.Value))
-                SEGIPlugin.SecondaryBounceGain.Value = newSecondaryBounce;
-            GUILayout.TextArea("Controls secondary light bounces. Higher values = more light bouncing.\nIt adds more light in total so interacts with the day/night ambient brightness settings", GUI.skin.box);
-            GUILayout.Space(10);
+            GUILayout.Label($"Emissive Light Gain: {SEGIPlugin.EmissiveLightGain.Value:F2}" +
+                            (SEGIPlugin.UseGainMultiplier.Value ? $" (Applied: {SEGIPlugin.EmissiveLightGain.Value * giMultiplier:F2})" : ""));
+            var newEmissiveLightGain = GUILayout.HorizontalSlider(SEGIPlugin.EmissiveLightGain.Value, 0.0f, 10.0f);
+            if (!Mathf.Approximately(newEmissiveLightGain, SEGIPlugin.EmissiveLightGain.Value))
+                SEGIPlugin.EmissiveLightGain.Value = newEmissiveLightGain;
+            GUILayout.TextArea("Multiplier for emissive light contribution during voxelization.\nHigher values = brighter emissive lights in the scene.", GUI.skin.box);
+            GUILayout.Space(5);
             var currentMultiplier = SEGIPlugin.UseGainMultiplier.Value;
             var newMultiplier = GUILayout.Toggle(currentMultiplier, $"x10 Gain Multiplier ({currentMultiplier})");
             if (newMultiplier != currentMultiplier) SEGIPlugin.UseGainMultiplier.Value = newMultiplier;
+            GUILayout.Space(5);
+            GUILayout.Label($"Secondary Bounce Gain: {SEGIPlugin.SecondaryBounceGain.Value:F2}");
+            var newSecondaryBounce = GUILayout.HorizontalSlider(SEGIPlugin.SecondaryBounceGain.Value, 0.0f, 0.75f);
+            if (!Mathf.Approximately(newSecondaryBounce, SEGIPlugin.SecondaryBounceGain.Value))
+                SEGIPlugin.SecondaryBounceGain.Value = newSecondaryBounce;
+            GUILayout.TextArea("Controls secondary light bounces. Higher values = more light bouncing into shadowed areas.", GUI.skin.box);
+            GUILayout.Space(5);
+            var currentBubble = SEGIPlugin.EmissiveBubbleEnabled.Value;
+            var newBubble = GUILayout.Toggle(currentBubble,
+                $"Emissive Exclusion Bubble ({(currentBubble ? "ON" : "OFF")})");
+            if (newBubble != currentBubble) SEGIPlugin.EmissiveBubbleEnabled.Value = newBubble;
+            GUILayout.TextArea("Prevent held items and suit from contributing to GI.", GUI.skin.box);
             GUILayout.EndVertical();
 
             #if SEGI_PROFILER
+                GUILayout.Space(10);
+                DrawDebugOverridesSection();
                 GUILayout.Space(10);
                 DrawProfilerSection();
                 GUILayout.Space(10);
@@ -265,6 +271,109 @@ public class ConfigMenu : MonoBehaviour
     }
 
     #if SEGI_PROFILER
+        private GUIStyle _debugBoxStyle;
+
+        private void DrawDebugOverridesSection()
+        {
+            if (_debugBoxStyle == null)
+                _debugBoxStyle = MakeStyle(new Color(0.1f, 0.35f, 0.4f, 0.8f), Color.white);
+
+            GUILayout.BeginVertical(_debugBoxStyle);
+            GUILayout.Label("=== Debug Overrides (Dev Only) ===", GUI.skin.box, GUILayout.ExpandWidth(true));
+            GUILayout.Label("Null = use hardcoded default. Drag slider to override.", GUI.skin.box);
+
+            GUILayout.Space(5);
+            GUILayout.Label("— Temporal —");
+            DebugOverrides.TemporalBlendWeight = DrawNullableFloat("Blend Weight", DebugOverrides.TemporalBlendWeight, 0.01f, 0.005f, 0.25f);
+            DebugOverrides.DisocclusionSensitivity = DrawNullableFloat("Disocclusion Sens.", DebugOverrides.DisocclusionSensitivity, 5.0f, 1f, 20f);
+            DebugOverrides.MotionBlendMax = DrawNullableFloat("Motion Blend Max", DebugOverrides.MotionBlendMax, 0.25f, 0.1f, 0.5f);
+
+            GUILayout.Space(5);
+            GUILayout.Label("— Cone Tracing —");
+            DebugOverrides.ConeLength = DrawNullableFloat("Length", DebugOverrides.ConeLength, ConfigData.ConeLength, 0.5f, 3.0f);
+            DebugOverrides.ConeWidth = DrawNullableFloat("Width", DebugOverrides.ConeWidth, ConfigData.ConeWidth, 1.0f, 12.0f);
+            DebugOverrides.ConeTraceBias = DrawNullableFloat("Cone Trace Bias", DebugOverrides.ConeTraceBias, ConfigData.ConeTraceBias, 0.0f, 2.0f);
+
+            GUILayout.Space(5);
+            GUILayout.Label("— Visual Tuning —");
+            DebugOverrides.OcclusionStrength = DrawNullableFloat("Occlusion Strength", DebugOverrides.OcclusionStrength, 0.86f, 0f, 2f);
+            DebugOverrides.NearOcclusionStrength = DrawNullableFloat("Near Occlusion", DebugOverrides.NearOcclusionStrength, ConfigData.NearOcclusionStrength, 0f, 2f);
+
+            GUILayout.Space(5);
+            GUILayout.Label("— Sun Shadows —");
+            DebugOverrides.SunShadowSoftness = DrawNullableFloat("Shadow Softness", DebugOverrides.SunShadowSoftness, 150.0f, 50f, 1000f);
+            DebugOverrides.SunShadowResolution = DrawNullableInt("Shadow Resolution", DebugOverrides.SunShadowResolution, 256, 64, 1024);
+
+            GUILayout.Space(5);
+            GUILayout.Label("— Voxelization —");
+            DebugOverrides.EmissiveTemporalBlend = DrawNullableFloat("Emissive Temporal Blend", DebugOverrides.EmissiveTemporalBlend, 0.6f, 0.05f, 1.0f);
+            DebugOverrides.ForwardOriginBias = DrawNullableBool("Forward Origin Bias (25%)", DebugOverrides.ForwardOriginBias);
+
+            GUILayout.Space(5);
+            if (GUILayout.Button("Reset All to Defaults", GUILayout.Height(25)))
+            {
+                DebugOverrides.TemporalBlendWeight = null;
+                DebugOverrides.DisocclusionSensitivity = null;
+                DebugOverrides.MotionBlendMax = null;
+                DebugOverrides.ConeLength = null;
+                DebugOverrides.ConeWidth = null;
+                DebugOverrides.ConeTraceBias = null;
+                DebugOverrides.OcclusionStrength = null;
+                DebugOverrides.NearOcclusionStrength = null;
+                DebugOverrides.SunShadowSoftness = null;
+                DebugOverrides.SunShadowResolution = null;
+                DebugOverrides.EmissiveTemporalBlend = null;
+                DebugOverrides.ForwardOriginBias = null;
+            }
+
+            GUILayout.EndVertical();
+        }
+
+        private float? DrawNullableFloat(string label, float? current, float defaultVal, float min, float max)
+        {
+            GUILayout.BeginHorizontal();
+            bool active = current.HasValue;
+            float displayVal = current ?? defaultVal;
+            GUILayout.Label($"{label}: {displayVal:F3}{(active ? "" : " (default)")}", GUILayout.Width(260));
+            float newVal = GUILayout.HorizontalSlider(displayVal, min, max);
+            bool reset = active && GUILayout.Button("×", GUILayout.Width(22));
+            GUILayout.EndHorizontal();
+            if (reset) return null;
+            if (!Mathf.Approximately(newVal, displayVal)) return newVal;
+            return current;
+        }
+
+        private int? DrawNullableInt(string label, int? current, int defaultVal, int min, int max)
+        {
+            GUILayout.BeginHorizontal();
+            bool active = current.HasValue;
+            int displayVal = current ?? defaultVal;
+            GUILayout.Label($"{label}: {displayVal}{(active ? "" : " (default)")}", GUILayout.Width(260));
+            int newVal = Mathf.RoundToInt(GUILayout.HorizontalSlider(displayVal, min, max));
+            bool reset = active && GUILayout.Button("×", GUILayout.Width(22));
+            GUILayout.EndHorizontal();
+            if (reset) return null;
+            if (newVal != displayVal) return newVal;
+            return current;
+        }
+
+        private bool? DrawNullableBool(string label, bool? current)
+        {
+            GUILayout.BeginHorizontal();
+            bool active = current.HasValue;
+            string state = active ? (current.Value ? "ON" : "OFF") : "default";
+            GUILayout.Label($"{label}: {state}", GUILayout.Width(260));
+            bool clicked = GUILayout.Button(active ? (current.Value ? "ON" : "OFF") : "—", GUILayout.Width(50));
+            GUILayout.EndHorizontal();
+            if (clicked)
+            {
+                if (!active) return false;
+                if (!current.Value) return true;
+                return null; // cycle: null → false → true → null
+            }
+            return current;
+        }
+
         private void DrawProfilerSection()
         {
             if (_profilerBoxStyle == null)

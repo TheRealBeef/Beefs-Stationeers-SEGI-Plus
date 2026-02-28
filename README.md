@@ -11,12 +11,15 @@ A modified version of SEGI (Sonic Ether Global Illumination) for Stationeers wit
 ## Features
 
 - 4 quality presets (Low/Medium/High/Extreme)
+- High Density Mode option at High/Extreme quality for twice the detail at half the range
 - Lightweight Mode that voxelizes only emissive objects for maximum performance at the cost of more light leakage
 - This lightweight mode is independent from the quality preset, so can be enabled/disabled to find the best balance for you
+- Emissive Light Gain to control emissive brightness separately from overall GI
+- Emissive Bubble option to prevent held items and suit from contributing to GI
 - Automatic day/night ambient lighting that adjusts based on sun position
 - Modified SEGI shaders to work properly with Stationeers rendering
 - In-game configuration menu (Press F11 while in-game)
-- In addition to lightweight mode, has an adaptive performance mode with strategy and target framerate options
+- Adaptive performance mode with strategy and target framerate options
 
 ## Requirements
 
@@ -41,6 +44,18 @@ Built upon the work of:
 - **Vinus** (previous implementation): [https://github.com/TerameTechYT/StationeersSharp/tree/development/Source/SEGIMod](https://github.com/TerameTechYT/StationeersSharp/tree/development/Source/SEGIMod)
 
 ## Changelog
+>### Version 1.4.0:
+>- Major rendering pipeline rewrite (again), likely you will want to revisit which settings you use (again)
+>- Less ghosting/noise
+>- Added Emissive Light Gain setting to control emissive brightness separately from overall GI
+>- Added Emissive Bubble toggle to prevent held items and suit from glowing
+>- Added High Density Mode option at High/Extreme quality — twice the detail but half the range
+>- Fix some objects falsely detected as emissive
+>- Adaptive performance now takes 15 seconds between changes
+>- Removed Day/Night Ambient Brightness sliders, now handled properly and automatically
+>- Removed Near Light Gain as it is ugly, replaced by Emissive Light Gain which controls emissive surfaces separate from sun contribution
+>- Secondary Bounce Gain is capped lower to prevent runaway brightness explosions
+
 >### Version 1.3.1:
 >- Hotfix to reduce artifacting/visual "snow"
 
