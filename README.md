@@ -44,6 +44,11 @@ Built upon the work of:
 - **Vinus** (previous implementation): [https://github.com/TerameTechYT/StationeersSharp/tree/development/Source/SEGIMod](https://github.com/TerameTechYT/StationeersSharp/tree/development/Source/SEGIMod)
 
 ## Changelog
+>### Version 1.4.1:
+>- Guard around NRE on init/settings change
+>- fix tiger striping on cave ceilings
+>- mostly fix geometry self-illuminating if the cave ceiling is far enough underground that the ground isn't in voxel volume in high density mode - with a small gap between ceiling and e.g. steel frame it will still self illuminate for now
+
 >### Version 1.4.0:
 >- Major rendering pipeline rewrite (again), likely you will want to revisit which settings you use (again)
 >- Less ghosting/noise

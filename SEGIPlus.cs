@@ -251,7 +251,10 @@ public class SEGIStationeers : MonoBehaviour
     private Coroutine _geomCacheCoroutine;
     private bool _geomBatchesReady = false;
 
-    private int BuildCycleLength => _geomBatchCount + 1;
+    private int BuildCycleLength => _geomBatchCount + 2;
+    private List<Renderer> _terrainBatch = new();
+    private const int TerrainLayer = 16;
+    private const float TerrainAlphaScale = 0.4f;
     private Vector3 _buildTargetOrigin;  // where the back-buffer is centered
     private bool _scrollBuildPending;
     private float _lastLightweightSunRefresh = -999f;
@@ -347,6 +350,7 @@ public class SEGIStationeers : MonoBehaviour
         {
             InitCheck();
             ResizeRenderTextures();
+            ResizePostProcessRTs();
             CheckSupport();
             UnityEngine.SceneManagement.SceneManager.sceneLoaded -= OnSceneLoaded;
             UnityEngine.SceneManagement.SceneManager.sceneLoaded += OnSceneLoaded;
@@ -662,7 +666,10 @@ public class SEGIStationeers : MonoBehaviour
                 {
                     Graphics.SetRenderTarget(sunDepthTexture);
                     shadowCamera.SetTargetBuffers(sunDepthTexture.colorBuffer, sunDepthTexture.depthBuffer);
+                    var prevLodBias = QualitySettings.lodBias;
+                    QualitySettings.lodBias = float.MaxValue;
                     shadowCamera.RenderWithShader(sunDepthShader, "");
+                    QualitySettings.lodBias = prevLodBias;
                     _lastSunDirection = currentSunDirection;
                     _sunShadowOrigin = voxelSpaceOrigin;
                     _lastLightweightSunRefresh = Time.unscaledTime;
@@ -708,6 +715,8 @@ public class SEGIStationeers : MonoBehaviour
             if (ConfigData.LightweightMode)
             {
                 Shader.SetGlobalInt("SEGIStripSun", 0);
+                Shader.SetGlobalFloat("SEGIAlphaScale", 1.0f);
+                Shader.SetGlobalInt("SEGISkipInnerOcclusion", 0);
 
                 if (!Profiler.ShouldSkip("ClearInts"))
                     ClearIntVolume4(integerVolume4, adaptiveVoxelResolution);
@@ -836,7 +845,10 @@ public class SEGIStationeers : MonoBehaviour
                             var originalShadowMask = shadowCamera.cullingMask;
                             shadowCamera.cullingMask = 1 << tempLayer;
                             shadowCamera.SetTargetBuffers(sunDepthTextureBack.colorBuffer, sunDepthTextureBack.depthBuffer);
+                            var prevLodBias = QualitySettings.lodBias;
+                            QualitySettings.lodBias = float.MaxValue;
                             shadowCamera.RenderWithShader(sunDepthShader, "");
+                            QualitySettings.lodBias = prevLodBias;
                             shadowCamera.cullingMask = originalShadowMask;
                             shadowCamera.clearFlags = CameraClearFlags.SolidColor;
                         }
@@ -847,6 +859,8 @@ public class SEGIStationeers : MonoBehaviour
                             voxelCamera.cullingMask = 1 << tempLayer;
 
                             Shader.SetGlobalInt("SEGIStripSun", 1);
+                            Shader.SetGlobalFloat("SEGIAlphaScale", 1.0f);
+                            Shader.SetGlobalInt("SEGISkipInnerOcclusion", 0);
                             SetIntVolume4RandomWrite(geomCacheCopy4);
 
                             voxelCamera.targetTexture = dummyVoxelTextureAAScaled;
@@ -865,7 +879,69 @@ public class SEGIStationeers : MonoBehaviour
                         PositionVoxelCameras(voxelSpaceOrigin);
                     }
 
-                    if (batchIdx == _geomBatchCount && sunAboveHorizon && !Profiler.ShouldSkip("SunDepth"))
+                    if (batchIdx == _geomBatchCount && _terrainBatch.Count > 0)
+                    {
+                        PositionVoxelCameras(_buildTargetOrigin);
+                        const int tempLayer = 31;
+                        _layerRestoreCache.Clear();
+                        for (int i = _terrainBatch.Count - 1; i >= 0; i--)
+                        {
+                            var r = _terrainBatch[i];
+                            if (r == null || !r)
+                            {
+                                _terrainBatch.RemoveAt(i);
+                                continue;
+                            }
+                            if (r.gameObject.layer != tempLayer)
+                            {
+                                _layerRestoreCache[r.gameObject] = r.gameObject.layer;
+                                r.gameObject.layer = tempLayer;
+                            }
+                        }
+
+                        if (sunAboveHorizon && !Profiler.ShouldSkip("SunDepth"))
+                        {
+                            shadowCamera.clearFlags = CameraClearFlags.Nothing;
+                            var originalShadowMask = shadowCamera.cullingMask;
+                            shadowCamera.cullingMask = 1 << tempLayer;
+                            shadowCamera.SetTargetBuffers(sunDepthTextureBack.colorBuffer, sunDepthTextureBack.depthBuffer);
+                            var prevLodBias = QualitySettings.lodBias;
+                            QualitySettings.lodBias = float.MaxValue;
+                            shadowCamera.RenderWithShader(sunDepthShader, "");
+                            QualitySettings.lodBias = prevLodBias;
+                            shadowCamera.cullingMask = originalShadowMask;
+                            shadowCamera.clearFlags = CameraClearFlags.SolidColor;
+                        }
+
+                        if (!Profiler.ShouldSkip("GeomVoxelize"))
+                        {
+                            var originalMask = voxelCamera.cullingMask;
+                            voxelCamera.cullingMask = 1 << tempLayer;
+
+                            Shader.SetGlobalInt("SEGIStripSun", 1);
+                            Shader.SetGlobalFloat("SEGIAlphaScale", TerrainAlphaScale);
+                            Shader.SetGlobalInt("SEGISkipInnerOcclusion", 1);
+                            SetIntVolume4RandomWrite(geomCacheCopy4);
+
+                            voxelCamera.targetTexture = dummyVoxelTextureAAScaled;
+                            voxelCamera.RenderWithShader(voxelizationShaderBeefEdit, "");
+                            Graphics.ClearRandomWriteTargets();
+
+                            Shader.SetGlobalFloat("SEGIAlphaScale", 1.0f);
+                            Shader.SetGlobalInt("SEGISkipInnerOcclusion", 0);
+                            voxelCamera.cullingMask = originalMask;
+                        }
+
+                        foreach (var kvp in _layerRestoreCache)
+                        {
+                            if (kvp.Key != null)
+                                kvp.Key.layer = kvp.Value;
+                        }
+
+                        PositionVoxelCameras(voxelSpaceOrigin);
+                    }
+
+                    if (batchIdx == _geomBatchCount + 1 && sunAboveHorizon && !Profiler.ShouldSkip("SunDepth"))
                     {
                         PositionVoxelCameras(_buildTargetOrigin);
 
@@ -887,7 +963,10 @@ public class SEGIStationeers : MonoBehaviour
                             shadowCamera.cullingMask = 1 << tempLayer;
                             shadowCamera.clearFlags = CameraClearFlags.Nothing;
                             shadowCamera.SetTargetBuffers(sunDepthTextureBack.colorBuffer, sunDepthTextureBack.depthBuffer);
+                            var prevLodBias = QualitySettings.lodBias;
+                            QualitySettings.lodBias = float.MaxValue;
                             shadowCamera.RenderWithShader(sunDepthShader, "");
+                            QualitySettings.lodBias = prevLodBias;
                             shadowCamera.cullingMask = originalShadowMask;
                             shadowCamera.clearFlags = CameraClearFlags.SolidColor;
 
@@ -928,6 +1007,8 @@ public class SEGIStationeers : MonoBehaviour
                 }
 
                 Shader.SetGlobalInt("SEGIStripSun", 0);
+                Shader.SetGlobalFloat("SEGIAlphaScale", 1.0f);
+                Shader.SetGlobalInt("SEGISkipInnerOcclusion", 0);
                 UpdateEmissiveCache();
 
                 if (!Profiler.ShouldSkip("ClearInts"))
@@ -1096,6 +1177,17 @@ public class SEGIStationeers : MonoBehaviour
             return;
         }
 
+        if (_persistGI1 == null || _persistGI2 == null || _persistDepth == null || _persistNormal == null)
+        {
+            ResizePostProcessRTs();
+            if (_persistGI1 == null)
+            {
+                Graphics.Blit(source, destination);
+                Profiler.EndFrame();
+                return;
+            }
+        }
+
         //Set parameters
         int giRenderRes = GIRenderRes;
         Shader.SetGlobalInt("SEGIFrameSwitch", frameCounter);
@@ -1207,62 +1299,71 @@ public class SEGIStationeers : MonoBehaviour
             }
             else
             {
-                int probeSpacing = ProbeSpacing;
-                int traceW = gi2.width;
-                int traceH = gi2.height;
-                if (giRenderRes == 2)
-                    probeSpacing = Mathf.Max(2, probeSpacing / 2);
-
-                int probeW = Mathf.CeilToInt((float)traceW / probeSpacing);
-                int probeH = Mathf.CeilToInt((float)traceH / probeSpacing);
-
-                if (probeIrradiance == null || probeIrradiance.width != probeW || probeIrradiance.height != probeH)
+                var gBufferNormals = Shader.GetGlobalTexture("_CameraGBufferTexture2");
+                if (gBufferNormals == null)
                 {
-                    if (probeIrradiance != null) CleanupTexture(ref probeIrradiance);
-                    probeIrradiance = new RenderTexture(probeW, probeH, 0, RenderTextureFormat.ARGBHalf)
+                    Graphics.Blit(source, gi2, material, Pass.DiffuseTrace);
+                }
+                else
+                {
+                    int probeSpacing = ProbeSpacing;
+                    int traceW = gi2.width;
+                    int traceH = gi2.height;
+                    if (giRenderRes == 2)
+                        probeSpacing = Mathf.Max(2, probeSpacing / 2);
+
+                    int probeW = Mathf.CeilToInt((float)traceW / probeSpacing);
+                    int probeH = Mathf.CeilToInt((float)traceH / probeSpacing);
+
+                    if (probeIrradiance == null || probeIrradiance.width != probeW || probeIrradiance.height != probeH)
                     {
-                        enableRandomWrite = true,
-                        filterMode = FilterMode.Point,
-                        hideFlags = HideFlags.HideAndDontSave
-                    };
-                    probeIrradiance.Create();
+                        if (probeIrradiance != null) CleanupTexture(ref probeIrradiance);
+                        probeIrradiance = new RenderTexture(probeW, probeH, 0, RenderTextureFormat.ARGBHalf)
+                        {
+                            enableRandomWrite = true,
+                            filterMode = FilterMode.Point,
+                            hideFlags = HideFlags.HideAndDontSave
+                        };
+                        probeIrradiance.Create();
+                    }
+
+                    SetComputeTraceUniforms(_probeTraceKernel);
+                    coneTraceCompute.SetTexture(_probeTraceKernel, "ProbeIrradiance", probeIrradiance);
+                    coneTraceCompute.SetTextureFromGlobal(_probeTraceKernel, "DepthTexture", "_CameraDepthTexture");
+                    coneTraceCompute.SetTexture(_probeTraceKernel, "GBufferNormals", gBufferNormals);
+                    coneTraceCompute.SetTexture(_probeTraceKernel, "NoiseTexture", blueNoise[frameCounter % 64]);
+                    coneTraceCompute.SetInt("FrameCounter", frameCounter);
+                    BindVolumeTexturesToCompute(_probeTraceKernel);
+                    coneTraceCompute.SetMatrix("CameraToWorld", attachedCamera.cameraToWorldMatrix);
+                    coneTraceCompute.SetMatrix("ProjectionMatrixInverse", attachedCamera.projectionMatrix.inverse);
+                    coneTraceCompute.SetInts("Resolution", traceW, traceH);
+                    coneTraceCompute.SetInts("ProbeGridSize", probeW, probeH);
+                    coneTraceCompute.SetInt("ProbeSpacing", probeSpacing);
+                    coneTraceCompute.SetInt("HalfResolution", giRenderRes == 2 ? 1 : 0);
+
+                    // Dispatch probe trace
+                    coneTraceCompute.Dispatch(_probeTraceKernel,
+                        Mathf.CeilToInt(probeW / 8f),
+                        Mathf.CeilToInt(probeH / 8f), 1);
+
+                    SetComputeTraceUniforms(_probeInterpolateKernel);
+                    coneTraceCompute.SetTexture(_probeInterpolateKernel, "ProbeIrradianceIn", probeIrradiance);
+                    coneTraceCompute.SetTexture(_probeInterpolateKernel, "Result", gi2);
+                    coneTraceCompute.SetTextureFromGlobal(_probeInterpolateKernel, "DepthTexture",
+                        "_CameraDepthTexture");
+                    coneTraceCompute.SetTexture(_probeInterpolateKernel, "GBufferNormals", gBufferNormals);
+                    coneTraceCompute.SetInts("Resolution", traceW, traceH);
+                    coneTraceCompute.SetInts("ProbeGridSize", probeW, probeH);
+                    coneTraceCompute.SetInt("ProbeSpacing", probeSpacing);
+
+                    if (!Profiler.ShouldSkip("ProbeInterpolate"))
+                    {
+                        coneTraceCompute.Dispatch(_probeInterpolateKernel,
+                            Mathf.CeilToInt(traceW / 8f),
+                            Mathf.CeilToInt(traceH / 8f), 1);
+                    }
+
                 }
-
-                SetComputeTraceUniforms(_probeTraceKernel);
-                coneTraceCompute.SetTexture(_probeTraceKernel, "ProbeIrradiance", probeIrradiance);
-                coneTraceCompute.SetTextureFromGlobal(_probeTraceKernel, "DepthTexture", "_CameraDepthTexture");
-                coneTraceCompute.SetTexture(_probeTraceKernel, "GBufferNormals", Shader.GetGlobalTexture("_CameraGBufferTexture2") as Texture);
-                coneTraceCompute.SetTexture(_probeTraceKernel, "NoiseTexture", blueNoise[frameCounter % 64]);
-                coneTraceCompute.SetInt("FrameCounter", frameCounter);
-                BindVolumeTexturesToCompute(_probeTraceKernel);
-                coneTraceCompute.SetMatrix("CameraToWorld", attachedCamera.cameraToWorldMatrix);
-                coneTraceCompute.SetMatrix("ProjectionMatrixInverse", attachedCamera.projectionMatrix.inverse);
-                coneTraceCompute.SetInts("Resolution", traceW, traceH);
-                coneTraceCompute.SetInts("ProbeGridSize", probeW, probeH);
-                coneTraceCompute.SetInt("ProbeSpacing", probeSpacing);
-                coneTraceCompute.SetInt("HalfResolution", giRenderRes == 2 ? 1 : 0);
-
-                // Dispatch probe trace
-                coneTraceCompute.Dispatch(_probeTraceKernel,
-                    Mathf.CeilToInt(probeW / 8f),
-                    Mathf.CeilToInt(probeH / 8f), 1);
-
-                SetComputeTraceUniforms(_probeInterpolateKernel);
-                coneTraceCompute.SetTexture(_probeInterpolateKernel, "ProbeIrradianceIn", probeIrradiance);
-                coneTraceCompute.SetTexture(_probeInterpolateKernel, "Result", gi2);
-                coneTraceCompute.SetTextureFromGlobal(_probeInterpolateKernel, "DepthTexture", "_CameraDepthTexture");
-                coneTraceCompute.SetTexture(_probeInterpolateKernel, "GBufferNormals", Shader.GetGlobalTexture("_CameraGBufferTexture2") as Texture);
-                coneTraceCompute.SetInts("Resolution", traceW, traceH);
-                coneTraceCompute.SetInts("ProbeGridSize", probeW, probeH);
-                coneTraceCompute.SetInt("ProbeSpacing", probeSpacing);
-
-                if (!Profiler.ShouldSkip("ProbeInterpolate"))
-                {
-                    coneTraceCompute.Dispatch(_probeInterpolateKernel,
-                        Mathf.CeilToInt(traceW / 8f),
-                        Mathf.CeilToInt(traceH / 8f), 1);
-                }
-
             }
         }
         else
@@ -1280,6 +1381,16 @@ public class SEGIStationeers : MonoBehaviour
         //If Half Resolution tracing is enabled
         if (giRenderRes == 2)
         {
+            if (_persistGI3 == null || _persistGI4 == null)
+            {
+                ResizePostProcessRTs();
+                if (_persistGI3 == null || _persistGI4 == null)
+                {
+                    Graphics.Blit(source, destination);
+                    Profiler.EndFrame();
+                    return;
+                }
+            }
             var gi3 = _persistGI3;
             var gi4 = _persistGI4;
             filtered.filterMode = FilterMode.Point;
@@ -1458,6 +1569,11 @@ public class SEGIStationeers : MonoBehaviour
         RenderTexture input, RenderTexture scratch,
         int giWidth, int giHeight)
     {
+        if (atrousFilterCompute == null) return input;
+
+        var atrousGBufferNormals = Shader.GetGlobalTexture("_CameraGBufferTexture2");
+        if (atrousGBufferNormals == null) return input;
+
         RenderTexture src = input;
         RenderTexture dst = scratch;
 
@@ -1475,8 +1591,7 @@ public class SEGIStationeers : MonoBehaviour
         atrousFilterCompute.SetVector("_ZBufferParams", Shader.GetGlobalVector("_ZBufferParams"));
 
         atrousFilterCompute.SetTextureFromGlobal(_atrousKernel, "_DepthTexture", "_CameraDepthTexture");
-        atrousFilterCompute.SetTexture(_atrousKernel, "_NormalTexture",
-            Shader.GetGlobalTexture("_CameraGBufferTexture2") as Texture);
+        atrousFilterCompute.SetTexture(_atrousKernel, "_NormalTexture", atrousGBufferNormals);
 
         int groupsX = Mathf.CeilToInt(giWidth / 8f);
         int groupsY = Mathf.CeilToInt(giHeight / 8f);
@@ -1544,7 +1659,7 @@ public class SEGIStationeers : MonoBehaviour
 #if SEGI_PROFILER
         sunBakeCompute.SetFloat("SunShadowSoftness", DebugOverrides.SunShadowSoftness ?? 150.0f);
 #endif
-        sunBakeCompute.SetFloat("SunBakeShadowBias", 0.005f);
+        sunBakeCompute.SetFloat("SunBakeShadowBias", 0.002f);
         sunBakeCompute.SetFloat("SunBakeIntensity", 5.0f);
         sunBakeCompute.SetInt("ReversedZ", SystemInfo.usesReversedZBuffer ? 1 : 0);
 
@@ -2005,9 +2120,16 @@ public class SEGIStationeers : MonoBehaviour
             _geomBatches[i].Clear();
             _batchWeights[i] = 0;
         }
+        _terrainBatch.Clear();
 
         foreach (var rw in _weightedRenderers)
         {
+            if (rw.renderer != null && rw.renderer.gameObject.layer == TerrainLayer)
+            {
+                _terrainBatch.Add(rw.renderer);
+                continue;
+            }
+
             int lightest = 0;
             for (int i = 1; i < _geomBatchCount; i++)
             {
