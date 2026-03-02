@@ -2,7 +2,7 @@
 <ModMetadata xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
     <Name>Beef's SEGI Plus</Name>
     <Author>TheRealBeef</Author>
-    <Version>1.4.1</Version>
+    <Version>1.4.2</Version>
 
     <Description>
         [h1]Beef's SEGI Plus[/h1]
@@ -13,7 +13,7 @@
 
         A modified version of SEGI (Sonic Ether Global Illumination) for Stationeers with shader fixes and performance options.
 
-        - 4 quality presets (Low/Medium/High/Extreme)
+        - 5 quality presets (Low/Medium/High/Extreme/Ultra Extreme VRAM Eater Pro Max)
         - High Density Mode option at High/Extreme quality for twice the detail at half the range
         - Lightweight Mode that voxelizes only emissive objects for maximum performance at the cost of more light leakage
         - This lightweight mode is independent from the quality preset, so can be enabled/disabled to find the best balance for you
@@ -35,6 +35,11 @@
     </Description>
 
     <ChangeLog>
+        1.4.2:
+        - Add option to enable/disable forwards bias of voxel volume
+        - Fix flickering shadows from point lights
+        - Add a new maximum quality level
+
         1.4.1:
         - Guard around NRE on init/settings change
         - fix tiger striping on cave ceilings

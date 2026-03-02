@@ -51,6 +51,7 @@ namespace BeefsSEGIPlus
         public static ConfigEntry<bool> UseGainMultiplier;
         public static ConfigEntry<bool> EmissiveBubbleEnabled;
         public static ConfigEntry<bool> DenseVoxelMode;
+        public static ConfigEntry<bool> ForwardOriginBias;
 
         private static SEGIStationeers SegiStationeersInstance { get; set; }
 
@@ -189,11 +190,13 @@ namespace BeefsSEGIPlus
                 new ConfigDescription("Secondary bounce gain", new AcceptableValueRange<float>(0f, 0.75f)));
             EmissiveBubbleEnabled = Config.Bind("Gain Knobs", "Emissive Exclusion Bubble", true,
                 "Prevents held items and suit from casting emissive light into the scene.");
-            QualityLevel = Config.Bind("Performance", "Quality Level - 0 for Low, 3 for Extreme.", 1,
-                new ConfigDescription("Quality (0=Low, 1=Medium, 2=High, 3=Extreme)",
-                    new AcceptableValueRange<int>(0, 3)));
+            QualityLevel = Config.Bind("Performance", "Quality Level - 0 for Low, 4 for Ultra Extreme.", 1,
+                new ConfigDescription("Quality (0=Low, 1=Medium, 2=High, 3=Extreme, 4=Ultra Extreme VRAM Eater Pro Max)",
+                    new AcceptableValueRange<int>(0, 4)));
             DenseVoxelMode = Config.Bind("Performance", "High Density Mode", false,
                 "Finer GI detail at the cost of shorter range.");
+            ForwardOriginBias = Config.Bind("Performance", "Forward Origin Bias", true,
+                "Pushes the voxel volume 25% forward in the camera's facing direction.");
             LightweightMode = Config.Bind("Performance", "**Lightweight Mode**", false,
                 "If you enable this it cull most objects except the emissive ones during voxelization and runs *way* faster, at the cost of light leakage. Can be combined with any quality setting. Will be deprecated in a future update.");
             AdaptivePerformance = Config.Bind("Performance", "Adaptive Performance", false,
@@ -395,17 +398,17 @@ namespace BeefsSEGIPlus
     {
         private static int CurrentQualityLevel => SEGIPlugin.QualityLevel?.Value ?? 1;
         private static readonly SEGIStationeers.VoxelResolution[] VoxelResolutions =
-            [SEGIStationeers.VoxelResolution.Medium, SEGIStationeers.VoxelResolution.Medium, SEGIStationeers.VoxelResolution.High, SEGIStationeers.VoxelResolution.High];
-        private static readonly bool[] HalfResolutionLevels = [true, false, false, false];
-        private static readonly bool[] VoxelAntiAliasingLevels = [false, false, true, true];
-        private static readonly float[] VoxelSpaceSizes = [16.0f, 16.0f, 32.0f, 32.0f];
-        private static readonly float[] ShadowSpaceSizes = [24.0f, 24.0f, 48.0f, 48.0f];
-        private static readonly bool[] GaussianMipFilterLevels = [true, true, true, true];
-        private static readonly int[] ConesLevels = [4, 6, 8, 12];
-        private static readonly int[] ConeTraceStepsLevels = [6, 8, 10, 14];
-        private static readonly float[] ConeLengths = [1.0f, 1.0f, 1.0f, 1.0f];
-        private static readonly float[] ConeWidths = [6.0f, 6.0f, 6.0f, 6.0f];
-        private static readonly int[] SunShadowResolutions = [256, 256, 512, 512];
+            [SEGIStationeers.VoxelResolution.Medium, SEGIStationeers.VoxelResolution.Medium, SEGIStationeers.VoxelResolution.High, SEGIStationeers.VoxelResolution.High, SEGIStationeers.VoxelResolution.Ultra];
+        private static readonly bool[] HalfResolutionLevels = [true, false, false, false, false];
+        private static readonly bool[] VoxelAntiAliasingLevels = [false, false, true, true, true];
+        private static readonly float[] VoxelSpaceSizes = [16.0f, 16.0f, 32.0f, 32.0f, 48.0f];
+        private static readonly float[] ShadowSpaceSizes = [24.0f, 24.0f, 48.0f, 48.0f, 60.0f];
+        private static readonly bool[] GaussianMipFilterLevels = [true, true, true, true, true];
+        private static readonly int[] ConesLevels = [4, 6, 8, 12, 12];
+        private static readonly int[] ConeTraceStepsLevels = [6, 8, 10, 14, 14];
+        private static readonly float[] ConeLengths = [1.0f, 1.0f, 1.0f, 1.0f, 1.0f];
+        private static readonly float[] ConeWidths = [6.0f, 6.0f, 6.0f, 6.0f, 6.0f];
+        private static readonly int[] SunShadowResolutions = [256, 256, 512, 512, 512];
         public static SEGIStationeers.VoxelResolution VoxelResolution => VoxelResolutions[CurrentQualityLevel];
         public static bool HalfResolution => HalfResolutionLevels[CurrentQualityLevel];
         public static bool VoxelAntiAliasing => VoxelAntiAliasingLevels[CurrentQualityLevel];
@@ -451,7 +454,7 @@ namespace BeefsSEGIPlus
             }
         }
         public static float OcclusionStrength => 0.86f;
-        private static readonly float[] NearOcclusionStrengths = { 0.42f, 0.42f, 0.86f, 0.86f };
+        private static readonly float[] NearOcclusionStrengths = { 0.42f, 0.42f, 0.86f, 0.86f, 0.86f };
         public static float NearOcclusionStrength => NearOcclusionStrengths[CurrentQualityLevel];
         public static float OcclusionPower => 1.0f;
         public static int InnerOcclusionLayers => 1;
@@ -460,6 +463,7 @@ namespace BeefsSEGIPlus
         public static float FarOcclusionStrength => 0.86f;
         public static float FarthestOcclusionStrength => 0.86f;
         public static bool LightweightMode => SEGIPlugin.LightweightMode?.Value ?? false;
+        public static bool ForwardOriginBias => SEGIPlugin.ForwardOriginBias?.Value ?? true;
         public static int TargetFramerate => SEGIPlugin.TargetFramerate?.Value ?? 75;
 
         public static string GetQualityName()
@@ -470,6 +474,7 @@ namespace BeefsSEGIPlus
                 1 => "Medium",
                 2 => "High",
                 3 => "Extreme",
+                4 => "Ultra Extreme VRAM Eater Pro Max",
                 _ => "Unknown"
             };
         }

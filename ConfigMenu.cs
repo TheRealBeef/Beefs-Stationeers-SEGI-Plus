@@ -156,8 +156,13 @@ public class ConfigMenu : MonoBehaviour
             GUILayout.BeginVertical(_orangeBoxStyle);
             GUILayout.Label("=== Quality Level ===", GUI.skin.box, GUILayout.ExpandWidth(true));
             GUILayout.Label($"Quality Level: {SEGIPlugin.QualityLevel.Value} ({ConfigData.GetQualityName()})");
-            var newQualityLevel = Mathf.RoundToInt(GUILayout.HorizontalSlider(SEGIPlugin.QualityLevel.Value, 0, 3));
+            var newQualityLevel = Mathf.RoundToInt(GUILayout.HorizontalSlider(SEGIPlugin.QualityLevel.Value, 0, 4));
             if (newQualityLevel != SEGIPlugin.QualityLevel.Value) SEGIPlugin.QualityLevel.Value = newQualityLevel;
+
+            if (SEGIPlugin.QualityLevel.Value == 4)
+            {
+                GUILayout.TextArea("Consumes additional 6.1gb of VRAM. Really better for screenshots than gameplay", GUI.skin.box);
+            }
 
             if (SEGIPlugin.QualityLevel.Value >= 2)
             {
@@ -183,6 +188,12 @@ public class ConfigMenu : MonoBehaviour
             var newLightweight = GUILayout.Toggle(currentLightweight, $"**Lightweight Mode** ({currentLightweight})");
             if (newLightweight != currentLightweight) SEGIPlugin.LightweightMode.Value = newLightweight;
             GUILayout.TextArea("Only renders emissive objects during voxelization. Faster but causes light leakage.\nYou probably will want to lower the main GI Gain with this enabled", GUI.skin.box);
+
+            GUILayout.Space(10);
+            var currentForwardBias = SEGIPlugin.ForwardOriginBias.Value;
+            var newForwardBias = GUILayout.Toggle(currentForwardBias, $"Forward Origin Bias ({(currentForwardBias ? "ON" : "OFF")})");
+            if (newForwardBias != currentForwardBias) SEGIPlugin.ForwardOriginBias.Value = newForwardBias;
+            GUILayout.TextArea("Pushes the voxel volume 25% forward in the direction you're looking.", GUI.skin.box);
 
             GUILayout.Space(10);
             GUILayout.Label("=== Adaptive Performance ===", GUI.skin.box, GUILayout.ExpandWidth(true));

@@ -10,7 +10,7 @@ A modified version of SEGI (Sonic Ether Global Illumination) for Stationeers wit
 
 ## Features
 
-- 4 quality presets (Low/Medium/High/Extreme)
+- 5 quality presets (Low/Medium/High/Extreme/Ultra Extreme VRAM Eater Pro Max)
 - High Density Mode option at High/Extreme quality for twice the detail at half the range
 - Lightweight Mode that voxelizes only emissive objects for maximum performance at the cost of more light leakage
 - This lightweight mode is independent from the quality preset, so can be enabled/disabled to find the best balance for you
@@ -44,6 +44,11 @@ Built upon the work of:
 - **Vinus** (previous implementation): [https://github.com/TerameTechYT/StationeersSharp/tree/development/Source/SEGIMod](https://github.com/TerameTechYT/StationeersSharp/tree/development/Source/SEGIMod)
 
 ## Changelog
+>### Version 1.4.2:
+>- Add option to enable/disable forwards bias of voxel volume
+>- Fix flickering shadows from point lights
+>- Add a new maximum quality level
+
 >### Version 1.4.1:
 >- Guard around NRE on init/settings change
 >- fix tiger striping on cave ceilings

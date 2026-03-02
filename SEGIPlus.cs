@@ -171,7 +171,8 @@ public class SEGIStationeers : MonoBehaviour
     public enum VoxelResolution
     {
         Medium = 128,
-        High = 256
+        High = 256,
+        Ultra = 448
     }
 
     private float VoxelScaleFactor => (float)ConfigData.VoxelResolution / 256.0f;
@@ -243,6 +244,10 @@ public class SEGIStationeers : MonoBehaviour
     private List<RendererWeight> _geomBuildBuffer = new();
     private List<Renderer>[] _geomBatches = new List<Renderer>[DEFAULT_GEOM_BATCH_COUNT];
     private int[] _batchWeights = new int[DEFAULT_GEOM_BATCH_COUNT];
+    private List<Renderer>[] _stagedGeomBatches = new List<Renderer>[DEFAULT_GEOM_BATCH_COUNT];
+    private int[] _stagedBatchWeights = new int[DEFAULT_GEOM_BATCH_COUNT];
+    private List<Renderer> _stagedTerrainBatch = new();
+    private bool _batchSwapPending = false;
     private int _currentBuildBatch = 0;
     private bool _buildCycleActive = false;
     private Vector3 _combinedVolumeOrigin;
@@ -261,6 +266,8 @@ public class SEGIStationeers : MonoBehaviour
     private const float LightweightSunRefreshInterval = 1.0f;
     private Vector3 _lastSunDirection = Vector3.down;
     private Vector3 _sunShadowOrigin = Vector3.zero;
+    private bool _sunAboveHorizon;
+    private Vector3 _currentSunDirection;
     private Quaternion rotationFront = new(0.0f, 0.0f, 0.0f, 1.0f);
     private Quaternion rotationLeft = new(0.0f, 0.7f, 0.0f, 0.7f);
     private Quaternion rotationTop = new(0.7f, 0.0f, 0.0f, 0.7f);
@@ -412,9 +419,15 @@ public class SEGIStationeers : MonoBehaviour
             _geomBatchCount = desiredBatchCount;
             _geomBatches = new List<Renderer>[_geomBatchCount];
             _batchWeights = new int[_geomBatchCount];
+            _stagedGeomBatches = new List<Renderer>[_geomBatchCount];
+            _stagedBatchWeights = new int[_geomBatchCount];
             for (int i = 0; i < _geomBatchCount; i++)
+            {
                 _geomBatches[i] = new List<Renderer>();
+                _stagedGeomBatches[i] = new List<Renderer>();
+            }
             _geomBatchesReady = false;
+            _batchSwapPending = false;
             _lastRendererSetHash = 0;
         }
 
@@ -650,6 +663,8 @@ public class SEGIStationeers : MonoBehaviour
 
             var sunAboveHorizon = sun != null && Vector3.Dot(-sun.transform.forward, Vector3.up) > 0f;
             var currentSunDirection = sun != null ? -sun.transform.forward : Vector3.down;
+            _sunAboveHorizon = sunAboveHorizon;
+            _currentSunDirection = currentSunDirection;
 
             if (ConfigData.LightweightMode && sunAboveHorizon)
             {
@@ -804,213 +819,6 @@ public class SEGIStationeers : MonoBehaviour
                     _currentBuildBatch = 0;
                 }
 
-                if (_buildCycleActive && _geomBatchesReady)
-                {
-                    int batchIdx = _currentBuildBatch;
-
-                    if (batchIdx == 0)
-                    {
-                        if (!Profiler.ShouldSkip("ClearInts"))
-                            ClearIntVolume4(geomCacheCopy4, adaptiveVoxelResolution);
-
-                        // Clear sun depth back-buffer for fresh accumulation
-                        if (sunAboveHorizon)
-                        {
-                            var prevActive = RenderTexture.active;
-                            Graphics.SetRenderTarget(sunDepthTextureBack);
-                            GL.Clear(true, true, Color.black);
-                            RenderTexture.active = prevActive;
-                        }
-                    }
-
-                    if (batchIdx < _geomBatchCount && _geomBatches[batchIdx].Count > 0)
-                    {
-                        PositionVoxelCameras(_buildTargetOrigin);
-                        const int tempLayer = 31;
-                        _layerRestoreCache.Clear();
-                        var batch = _geomBatches[batchIdx];
-                        for (int i = batch.Count - 1; i >= 0; i--)
-                        {
-                            var r = batch[i];
-                            if (r == null || !r)
-                            {
-                                batch.RemoveAt(i); // Clean dead refs
-                                continue;
-                            }
-                            if (r.gameObject.layer != tempLayer)
-                            {
-                                _layerRestoreCache[r.gameObject] = r.gameObject.layer;
-                                r.gameObject.layer = tempLayer;
-                            }
-                        }
-
-                        if (sunAboveHorizon && !Profiler.ShouldSkip("SunDepth"))
-                        {
-                            shadowCamera.clearFlags = CameraClearFlags.Nothing; // already cleared on batch 0
-                            var originalShadowMask = shadowCamera.cullingMask;
-                            shadowCamera.cullingMask = 1 << tempLayer;
-                            shadowCamera.SetTargetBuffers(sunDepthTextureBack.colorBuffer, sunDepthTextureBack.depthBuffer);
-                            var prevLodBias = QualitySettings.lodBias;
-                            QualitySettings.lodBias = float.MaxValue;
-                            shadowCamera.RenderWithShader(sunDepthShader, "");
-                            QualitySettings.lodBias = prevLodBias;
-                            shadowCamera.cullingMask = originalShadowMask;
-                            shadowCamera.clearFlags = CameraClearFlags.SolidColor;
-                        }
-
-                        if (!Profiler.ShouldSkip("GeomVoxelize"))
-                        {
-                            var originalMask = voxelCamera.cullingMask;
-                            voxelCamera.cullingMask = 1 << tempLayer;
-
-                            Shader.SetGlobalInt("SEGIStripSun", 1);
-                            Shader.SetGlobalFloat("SEGIAlphaScale", 1.0f);
-                            Shader.SetGlobalInt("SEGISkipInnerOcclusion", 0);
-                            SetIntVolume4RandomWrite(geomCacheCopy4);
-
-                            voxelCamera.targetTexture = dummyVoxelTextureAAScaled;
-                            voxelCamera.RenderWithShader(voxelizationShaderBeefEdit, "");
-                            Graphics.ClearRandomWriteTargets();
-
-                            voxelCamera.cullingMask = originalMask;
-                        }
-
-                        foreach (var kvp in _layerRestoreCache)
-                        {
-                            if (kvp.Key != null)
-                                kvp.Key.layer = kvp.Value;
-                        }
-
-                        PositionVoxelCameras(voxelSpaceOrigin);
-                    }
-
-                    if (batchIdx == _geomBatchCount && _terrainBatch.Count > 0)
-                    {
-                        PositionVoxelCameras(_buildTargetOrigin);
-                        const int tempLayer = 31;
-                        _layerRestoreCache.Clear();
-                        for (int i = _terrainBatch.Count - 1; i >= 0; i--)
-                        {
-                            var r = _terrainBatch[i];
-                            if (r == null || !r)
-                            {
-                                _terrainBatch.RemoveAt(i);
-                                continue;
-                            }
-                            if (r.gameObject.layer != tempLayer)
-                            {
-                                _layerRestoreCache[r.gameObject] = r.gameObject.layer;
-                                r.gameObject.layer = tempLayer;
-                            }
-                        }
-
-                        if (sunAboveHorizon && !Profiler.ShouldSkip("SunDepth"))
-                        {
-                            shadowCamera.clearFlags = CameraClearFlags.Nothing;
-                            var originalShadowMask = shadowCamera.cullingMask;
-                            shadowCamera.cullingMask = 1 << tempLayer;
-                            shadowCamera.SetTargetBuffers(sunDepthTextureBack.colorBuffer, sunDepthTextureBack.depthBuffer);
-                            var prevLodBias = QualitySettings.lodBias;
-                            QualitySettings.lodBias = float.MaxValue;
-                            shadowCamera.RenderWithShader(sunDepthShader, "");
-                            QualitySettings.lodBias = prevLodBias;
-                            shadowCamera.cullingMask = originalShadowMask;
-                            shadowCamera.clearFlags = CameraClearFlags.SolidColor;
-                        }
-
-                        if (!Profiler.ShouldSkip("GeomVoxelize"))
-                        {
-                            var originalMask = voxelCamera.cullingMask;
-                            voxelCamera.cullingMask = 1 << tempLayer;
-
-                            Shader.SetGlobalInt("SEGIStripSun", 1);
-                            Shader.SetGlobalFloat("SEGIAlphaScale", TerrainAlphaScale);
-                            Shader.SetGlobalInt("SEGISkipInnerOcclusion", 1);
-                            SetIntVolume4RandomWrite(geomCacheCopy4);
-
-                            voxelCamera.targetTexture = dummyVoxelTextureAAScaled;
-                            voxelCamera.RenderWithShader(voxelizationShaderBeefEdit, "");
-                            Graphics.ClearRandomWriteTargets();
-
-                            Shader.SetGlobalFloat("SEGIAlphaScale", 1.0f);
-                            Shader.SetGlobalInt("SEGISkipInnerOcclusion", 0);
-                            voxelCamera.cullingMask = originalMask;
-                        }
-
-                        foreach (var kvp in _layerRestoreCache)
-                        {
-                            if (kvp.Key != null)
-                                kvp.Key.layer = kvp.Value;
-                        }
-
-                        PositionVoxelCameras(voxelSpaceOrigin);
-                    }
-
-                    if (batchIdx == _geomBatchCount + 1 && sunAboveHorizon && !Profiler.ShouldSkip("SunDepth"))
-                    {
-                        PositionVoxelCameras(_buildTargetOrigin);
-
-                        var emissiveSunRenderers = GetEmissiveRenderers();
-                        if (emissiveSunRenderers.Count > 0)
-                        {
-                            const int tempLayer = 31;
-                            _layerRestoreCache.Clear();
-                            foreach (var r in emissiveSunRenderers)
-                            {
-                                if (r != null && r.gameObject.layer != tempLayer)
-                                {
-                                    _layerRestoreCache[r.gameObject] = r.gameObject.layer;
-                                    r.gameObject.layer = tempLayer;
-                                }
-                            }
-
-                            var originalShadowMask = shadowCamera.cullingMask;
-                            shadowCamera.cullingMask = 1 << tempLayer;
-                            shadowCamera.clearFlags = CameraClearFlags.Nothing;
-                            shadowCamera.SetTargetBuffers(sunDepthTextureBack.colorBuffer, sunDepthTextureBack.depthBuffer);
-                            var prevLodBias = QualitySettings.lodBias;
-                            QualitySettings.lodBias = float.MaxValue;
-                            shadowCamera.RenderWithShader(sunDepthShader, "");
-                            QualitySettings.lodBias = prevLodBias;
-                            shadowCamera.cullingMask = originalShadowMask;
-                            shadowCamera.clearFlags = CameraClearFlags.SolidColor;
-
-                            foreach (var kvp in _layerRestoreCache)
-                            {
-                                if (kvp.Key != null)
-                                    kvp.Key.layer = kvp.Value;
-                            }
-                        }
-
-                        PositionVoxelCameras(voxelSpaceOrigin);
-                    }
-
-                    _currentBuildBatch++;
-
-                    if (_currentBuildBatch >= BuildCycleLength)
-                    {
-                        voxelSpaceOrigin = _buildTargetOrigin;
-                        previousVoxelSpaceOrigin = voxelSpaceOrigin;
-                        PositionVoxelCameras(voxelSpaceOrigin);
-
-                        for (int c = 0; c < 4; c++)
-                            (geomCacheVolume4[c], geomCacheCopy4[c]) = (geomCacheCopy4[c], geomCacheVolume4[c]);
-
-                        _geomCacheWrapOffset = new int3Offset(0, 0, 0); // Fresh build is physically aligned
-                        _hybridCacheReady = true;
-
-                        (sunDepthTexture, sunDepthTextureBack) = (sunDepthTextureBack, sunDepthTexture);
-                        Shader.SetGlobalTexture("SEGISunDepth", sunDepthTexture);
-                        _lastSunDirection = currentSunDirection;
-                        _sunShadowOrigin = voxelSpaceOrigin;
-
-                        if (!Profiler.ShouldSkip("SunBake"))
-                            RunSunBake();
-                        _buildCycleActive = false;
-                        _currentBuildBatch = 0;
-                    }
-                }
-
                 Shader.SetGlobalInt("SEGIStripSun", 0);
                 Shader.SetGlobalFloat("SEGIAlphaScale", 1.0f);
                 Shader.SetGlobalInt("SEGISkipInnerOcclusion", 0);
@@ -1077,7 +885,6 @@ public class SEGIStationeers : MonoBehaviour
                 }
             }
 
-            //Manually filter/render mip maps
             if (!Profiler.ShouldSkip("MipChain"))
             {
                 if (_combinedVolume == null || !_combinedVolume.IsCreated())
@@ -1117,6 +924,226 @@ public class SEGIStationeers : MonoBehaviour
 
 
         RenderTexture.active = previousActive;
+    }
+
+    private void OnPostRender()
+    {
+        if (bypassRendering) return;
+        if (notReadyToRender) return;
+        if (!updateGI) return;
+        if (ConfigData.LightweightMode) return;
+        if (!_buildCycleActive || !_geomBatchesReady) return;
+
+        int batchIdx = _currentBuildBatch;
+
+        if (batchIdx == 0)
+        {
+            if (!Profiler.ShouldSkip("ClearInts"))
+                ClearIntVolume4(geomCacheCopy4, adaptiveVoxelResolution);
+
+            // Clear sun depth back-buffer for fresh accumulation
+            if (_sunAboveHorizon)
+            {
+                var prevActive = RenderTexture.active;
+                Graphics.SetRenderTarget(sunDepthTextureBack);
+                GL.Clear(true, true, Color.black);
+                RenderTexture.active = prevActive;
+            }
+        }
+
+        if (batchIdx < _geomBatchCount && _geomBatches[batchIdx].Count > 0)
+        {
+            PositionVoxelCameras(_buildTargetOrigin);
+            const int tempLayer = 31;
+            _layerRestoreCache.Clear();
+            var batch = _geomBatches[batchIdx];
+            for (int i = batch.Count - 1; i >= 0; i--)
+            {
+                var r = batch[i];
+                if (r == null || !r)
+                {
+                    batch.RemoveAt(i); // Clean dead refs
+                    continue;
+                }
+                if (r.gameObject.layer != tempLayer)
+                {
+                    _layerRestoreCache[r.gameObject] = r.gameObject.layer;
+                    r.gameObject.layer = tempLayer;
+                }
+            }
+
+            if (_sunAboveHorizon && !Profiler.ShouldSkip("SunDepth"))
+            {
+                shadowCamera.clearFlags = CameraClearFlags.Nothing; // already cleared on batch 0
+                var originalShadowMask = shadowCamera.cullingMask;
+                shadowCamera.cullingMask = 1 << tempLayer;
+                shadowCamera.SetTargetBuffers(sunDepthTextureBack.colorBuffer, sunDepthTextureBack.depthBuffer);
+                var prevLodBias = QualitySettings.lodBias;
+                QualitySettings.lodBias = float.MaxValue;
+                shadowCamera.RenderWithShader(sunDepthShader, "");
+                QualitySettings.lodBias = prevLodBias;
+                shadowCamera.cullingMask = originalShadowMask;
+                shadowCamera.clearFlags = CameraClearFlags.SolidColor;
+            }
+
+            if (!Profiler.ShouldSkip("GeomVoxelize"))
+            {
+                var originalMask = voxelCamera.cullingMask;
+                voxelCamera.cullingMask = 1 << tempLayer;
+
+                Shader.SetGlobalInt("SEGIStripSun", 1);
+                Shader.SetGlobalFloat("SEGIAlphaScale", 1.0f);
+                Shader.SetGlobalInt("SEGISkipInnerOcclusion", 0);
+                SetIntVolume4RandomWrite(geomCacheCopy4);
+
+                voxelCamera.targetTexture = dummyVoxelTextureAAScaled;
+                voxelCamera.RenderWithShader(voxelizationShaderBeefEdit, "");
+                Graphics.ClearRandomWriteTargets();
+
+                voxelCamera.cullingMask = originalMask;
+            }
+
+            foreach (var kvp in _layerRestoreCache)
+            {
+                if (kvp.Key != null)
+                    kvp.Key.layer = kvp.Value;
+            }
+
+            PositionVoxelCameras(voxelSpaceOrigin);
+        }
+
+        if (batchIdx == _geomBatchCount && _terrainBatch.Count > 0)
+        {
+            PositionVoxelCameras(_buildTargetOrigin);
+            const int tempLayer = 31;
+            _layerRestoreCache.Clear();
+            for (int i = _terrainBatch.Count - 1; i >= 0; i--)
+            {
+                var r = _terrainBatch[i];
+                if (r == null || !r)
+                {
+                    _terrainBatch.RemoveAt(i);
+                    continue;
+                }
+                if (r.gameObject.layer != tempLayer)
+                {
+                    _layerRestoreCache[r.gameObject] = r.gameObject.layer;
+                    r.gameObject.layer = tempLayer;
+                }
+            }
+
+            if (_sunAboveHorizon && !Profiler.ShouldSkip("SunDepth"))
+            {
+                shadowCamera.clearFlags = CameraClearFlags.Nothing;
+                var originalShadowMask = shadowCamera.cullingMask;
+                shadowCamera.cullingMask = 1 << tempLayer;
+                shadowCamera.SetTargetBuffers(sunDepthTextureBack.colorBuffer, sunDepthTextureBack.depthBuffer);
+                var prevLodBias = QualitySettings.lodBias;
+                QualitySettings.lodBias = float.MaxValue;
+                shadowCamera.RenderWithShader(sunDepthShader, "");
+                QualitySettings.lodBias = prevLodBias;
+                shadowCamera.cullingMask = originalShadowMask;
+                shadowCamera.clearFlags = CameraClearFlags.SolidColor;
+            }
+
+            if (!Profiler.ShouldSkip("GeomVoxelize"))
+            {
+                var originalMask = voxelCamera.cullingMask;
+                voxelCamera.cullingMask = 1 << tempLayer;
+
+                Shader.SetGlobalInt("SEGIStripSun", 1);
+                Shader.SetGlobalFloat("SEGIAlphaScale", TerrainAlphaScale);
+                Shader.SetGlobalInt("SEGISkipInnerOcclusion", 1);
+                SetIntVolume4RandomWrite(geomCacheCopy4);
+
+                voxelCamera.targetTexture = dummyVoxelTextureAAScaled;
+                voxelCamera.RenderWithShader(voxelizationShaderBeefEdit, "");
+                Graphics.ClearRandomWriteTargets();
+
+                Shader.SetGlobalFloat("SEGIAlphaScale", 1.0f);
+                Shader.SetGlobalInt("SEGISkipInnerOcclusion", 0);
+                voxelCamera.cullingMask = originalMask;
+            }
+
+            foreach (var kvp in _layerRestoreCache)
+            {
+                if (kvp.Key != null)
+                    kvp.Key.layer = kvp.Value;
+            }
+
+            PositionVoxelCameras(voxelSpaceOrigin);
+        }
+
+        if (batchIdx == _geomBatchCount + 1 && _sunAboveHorizon && !Profiler.ShouldSkip("SunDepth"))
+        {
+            PositionVoxelCameras(_buildTargetOrigin);
+
+            var emissiveSunRenderers = GetEmissiveRenderers();
+            if (emissiveSunRenderers.Count > 0)
+            {
+                const int tempLayer = 31;
+                _layerRestoreCache.Clear();
+                foreach (var r in emissiveSunRenderers)
+                {
+                    if (r != null && r.gameObject.layer != tempLayer)
+                    {
+                        _layerRestoreCache[r.gameObject] = r.gameObject.layer;
+                        r.gameObject.layer = tempLayer;
+                    }
+                }
+
+                var originalShadowMask = shadowCamera.cullingMask;
+                shadowCamera.cullingMask = 1 << tempLayer;
+                shadowCamera.clearFlags = CameraClearFlags.Nothing;
+                shadowCamera.SetTargetBuffers(sunDepthTextureBack.colorBuffer, sunDepthTextureBack.depthBuffer);
+                var prevLodBias = QualitySettings.lodBias;
+                QualitySettings.lodBias = float.MaxValue;
+                shadowCamera.RenderWithShader(sunDepthShader, "");
+                QualitySettings.lodBias = prevLodBias;
+                shadowCamera.cullingMask = originalShadowMask;
+                shadowCamera.clearFlags = CameraClearFlags.SolidColor;
+
+                foreach (var kvp in _layerRestoreCache)
+                {
+                    if (kvp.Key != null)
+                        kvp.Key.layer = kvp.Value;
+                }
+            }
+
+            PositionVoxelCameras(voxelSpaceOrigin);
+        }
+
+        _currentBuildBatch++;
+
+        if (_currentBuildBatch >= BuildCycleLength)
+        {
+            PositionVoxelCameras(_buildTargetOrigin);
+
+            for (int c = 0; c < 4; c++)
+                (geomCacheVolume4[c], geomCacheCopy4[c]) = (geomCacheCopy4[c], geomCacheVolume4[c]);
+
+            _geomCacheWrapOffset = new int3Offset(0, 0, 0);
+            _hybridCacheReady = true;
+
+            (sunDepthTexture, sunDepthTextureBack) = (sunDepthTextureBack, sunDepthTexture);
+            Shader.SetGlobalTexture("SEGISunDepth", sunDepthTexture);
+            _lastSunDirection = _currentSunDirection;
+            _sunShadowOrigin = _buildTargetOrigin;
+
+            if (!Profiler.ShouldSkip("SunBake"))
+                RunSunBake();
+
+            PositionVoxelCameras(voxelSpaceOrigin);
+
+            voxelSpaceOrigin = _buildTargetOrigin;
+            previousVoxelSpaceOrigin = voxelSpaceOrigin;
+
+            _buildCycleActive = false;
+            _currentBuildBatch = 0;
+
+            if (_batchSwapPending)
+                ApplyStagedBatches();
+        }
     }
 
     private bool _wasBypassed = false;
@@ -1836,6 +1863,9 @@ public class SEGIStationeers : MonoBehaviour
         _lastRendererSetHash = 0;
         for (int i = 0; i < _geomBatchCount; i++)
             _geomBatches[i] ??= new List<Renderer>();
+        for (int i = 0; i < _geomBatchCount; i++)
+            _stagedGeomBatches[i] ??= new List<Renderer>();
+        _batchSwapPending = false;
         _lastSunDirection = Vector3.down;
         _sunShadowOrigin = Vector3.zero;
         _lastLightweightSunRefresh = -999f;
@@ -1940,6 +1970,7 @@ public class SEGIStationeers : MonoBehaviour
         _buildCycleActive = false;
         _geomCacheWrapOffset = new int3Offset(0, 0, 0);
         _geomBatchesReady = false;
+        _batchSwapPending = false;
         _lastRendererSetHash = 0;
     }
 
@@ -2121,34 +2152,42 @@ public class SEGIStationeers : MonoBehaviour
 
         for (int i = 0; i < _geomBatchCount; i++)
         {
-            _geomBatches[i] ??= new List<Renderer>();
-            _geomBatches[i].Clear();
-            _batchWeights[i] = 0;
+            _stagedGeomBatches[i] ??= new List<Renderer>();
+            _stagedGeomBatches[i].Clear();
+            _stagedBatchWeights[i] = 0;
         }
-        _terrainBatch.Clear();
+        _stagedTerrainBatch.Clear();
 
         foreach (var rw in _weightedRenderers)
         {
             if (rw.renderer != null && rw.renderer.gameObject.layer == TerrainLayer)
             {
-                _terrainBatch.Add(rw.renderer);
+                _stagedTerrainBatch.Add(rw.renderer);
                 continue;
             }
 
             int lightest = 0;
             for (int i = 1; i < _geomBatchCount; i++)
             {
-                if (_batchWeights[i] < _batchWeights[lightest])
+                if (_stagedBatchWeights[i] < _stagedBatchWeights[lightest])
                     lightest = i;
             }
-            _geomBatches[lightest].Add(rw.renderer);
-            _batchWeights[lightest] += rw.triangles;
+            _stagedGeomBatches[lightest].Add(rw.renderer);
+            _stagedBatchWeights[lightest] += rw.triangles;
         }
 
         int totalTris = 0;
         for (int i = 0; i < _geomBatchCount; i++)
-            totalTris += _batchWeights[i];
+            totalTris += _stagedBatchWeights[i];
 
+    }
+
+    private void ApplyStagedBatches()
+    {
+        (_geomBatches, _stagedGeomBatches) = (_stagedGeomBatches, _geomBatches);
+        (_batchWeights, _stagedBatchWeights) = (_stagedBatchWeights, _batchWeights);
+        (_terrainBatch, _stagedTerrainBatch) = (_stagedTerrainBatch, _terrainBatch);
+        _batchSwapPending = false;
     }
 
     private void UpdateGeomRendererCache()
@@ -2210,11 +2249,20 @@ public class SEGIStationeers : MonoBehaviour
         _lastRendererSetHash = newHash;
         BuildBalancedBatches();
 
-        _geomBatchesReady = true;
-        if (changed && !_buildCycleActive && !_cacheNeedsFullRefresh)
+        if (!_buildCycleActive)
         {
-            _buildCycleActive = true;
-            _currentBuildBatch = 0;
+            ApplyStagedBatches();
+            _geomBatchesReady = true;
+            if (changed && !_cacheNeedsFullRefresh)
+            {
+                _buildCycleActive = true;
+                _currentBuildBatch = 0;
+            }
+        }
+        else
+        {
+            _batchSwapPending = true;
+            _geomBatchesReady = true;
         }
 
         _lastGeomCacheUpdate = Time.time;
@@ -2864,6 +2912,7 @@ public class SEGIStationeers : MonoBehaviour
         _buildCycleActive = false;
         _geomCacheWrapOffset = new int3Offset(0, 0, 0);
         _geomBatchesReady = false;
+        _batchSwapPending = false;
         _lastGeomCacheUpdate = 0f;
         _lastRendererSetHash = 0;
 
