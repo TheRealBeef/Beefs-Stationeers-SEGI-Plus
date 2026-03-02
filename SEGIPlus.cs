@@ -602,7 +602,7 @@ public class SEGIStationeers : MonoBehaviour
             PositionVoxelCameras(voxelSpaceOrigin);
 
             //Set matrices needed for voxelization
-            Shader.SetGlobalMatrix("WorldToCamera", attachedCamera.worldToCameraMatrix);
+            Shader.SetGlobalMatrix("SEGIWorldToCamera", attachedCamera.worldToCameraMatrix);
             Shader.SetGlobalMatrix("SEGIVoxelProjection", voxelCamera.projectionMatrix);
             Shader.SetGlobalMatrix("SEGIVoxelProjectionInverse", voxelCamera.projectionMatrix.inverse);
             Shader.SetGlobalInt("SEGIVoxelResolution", adaptiveVoxelResolution);
@@ -728,7 +728,12 @@ public class SEGIStationeers : MonoBehaviour
                 SetIntVolume4RandomWrite(integerVolume4);
                 voxelCamera.targetTexture = dummyVoxelTextureAAScaled;
                 var emissiveRenderersToUse = GetEmissiveRenderers();
-                if (emissiveRenderersToUse.Count == 0) return;
+                if (emissiveRenderersToUse.Count == 0)
+                {
+                    Graphics.ClearRandomWriteTargets();
+                    RenderTexture.active = previousActive;
+                    return;
+                }
                 const int tempLayer = 31;
                 _layerRestoreCache.Clear();
                     foreach (var r in emissiveRenderersToUse)
@@ -1193,7 +1198,7 @@ public class SEGIStationeers : MonoBehaviour
         Shader.SetGlobalInt("SEGIFrameSwitch", frameCounter);
         Shader.SetGlobalFloat("SEGIVoxelScaleFactor", VoxelScaleFactor);
         material.SetMatrix("CameraToWorld", attachedCamera.cameraToWorldMatrix);
-        material.SetMatrix("WorldToCamera", attachedCamera.worldToCameraMatrix);
+        material.SetMatrix("SEGIWorldToCamera", attachedCamera.worldToCameraMatrix);
         material.SetMatrix("ProjectionMatrixInverse", attachedCamera.projectionMatrix.inverse);
         material.SetMatrix("ProjectionMatrix", attachedCamera.projectionMatrix);
         material.SetInt("FrameSwitch", frameCounter);
@@ -1966,7 +1971,7 @@ public class SEGIStationeers : MonoBehaviour
         newCache.Clear();
         var frameStartTime = Time.realtimeSinceStartup * 1000f;
         var allRenderers = FindObjectsByType<Renderer>(FindObjectsSortMode.None);
-        const int BATCH_SIZE = 100;
+        const int BATCH_SIZE = 300;
         for (var i = 0; i < allRenderers.Length; i += BATCH_SIZE)
         {
             var endIndex = Mathf.Min(i + BATCH_SIZE, allRenderers.Length);
@@ -2148,7 +2153,7 @@ public class SEGIStationeers : MonoBehaviour
 
     private void UpdateGeomRendererCache()
     {
-        if (Time.time - _lastGeomCacheUpdate < 2.0f || _geomCacheCoroutine != null)
+        if (Time.time - _lastGeomCacheUpdate < 0.5f || _geomCacheCoroutine != null)
             return;
         _geomCacheCoroutine = StartCoroutine(UpdateGeomRendererCacheCoroutine());
     }
@@ -2163,7 +2168,7 @@ public class SEGIStationeers : MonoBehaviour
         Vector3 voxelMin = voxelSpaceOrigin - Vector3.one * halfSize;
         Vector3 voxelMax = voxelSpaceOrigin + Vector3.one * halfSize;
 
-        const int SCAN_BATCH_SIZE = 100;
+        const int SCAN_BATCH_SIZE = 400;
         for (int i = 0; i < allRenderers.Length; i += SCAN_BATCH_SIZE)
         {
             int endIndex = Mathf.Min(i + SCAN_BATCH_SIZE, allRenderers.Length);
