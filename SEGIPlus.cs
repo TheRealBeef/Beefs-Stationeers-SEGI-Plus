@@ -1708,7 +1708,7 @@ public class SEGIStationeers : MonoBehaviour
 
     private void Init()
     {
-        sunDepthShader = Bundle.LoadAsset<Shader>("SEGIRenderSunDepth");
+        sunDepthShader = SegiBeefEdit.LoadAsset<Shader>("SEGIRenderSunDepth");
         clearCompute = SegiBeefEdit.LoadAsset<ComputeShader>("SEGIClearBeefEdit");
         transferIntsCompute = SegiBeefEdit.LoadAsset<ComputeShader>("SEGITransferIntsBeefEdit");
         mipFilterCompute = SegiBeefEdit.LoadAsset<ComputeShader>("SEGIMipFilterBeefEdit");
