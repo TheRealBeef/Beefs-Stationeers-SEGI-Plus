@@ -15,7 +15,9 @@ public class ConfigMenu : MonoBehaviour
     private GUIStyle _blueBoxStyle;
     private GUIStyle _redBoxStyle;
     private GUIStyle _greenBoxStyle;
+    private GUIStyle _purpleBoxStyle;
     private bool _stylesInitialized = false;
+    private bool _showAdvanced = false;
 
     #if SEGI_PROFILER
         private GUIStyle _profilerBoxStyle;
@@ -261,6 +263,35 @@ public class ConfigMenu : MonoBehaviour
                 $"Emissive Exclusion Bubble ({(currentBubble ? "ON" : "OFF")})");
             if (newBubble != currentBubble) SEGIPlugin.EmissiveBubbleEnabled.Value = newBubble;
             GUILayout.TextArea("Prevent held items and suit from contributing to GI.", GUI.skin.box);
+            GUILayout.EndVertical();
+
+            GUILayout.Space(3);
+
+            GUILayout.BeginVertical(_purpleBoxStyle);
+            if (GUILayout.Button($"=== Advanced === {(_showAdvanced ? "[-]" : "[+]")}", GUI.skin.box, GUILayout.ExpandWidth(true)))
+                _showAdvanced = !_showAdvanced;
+            if (_showAdvanced)
+            {
+                GUILayout.Label($"Occlusion Strength: {SEGIPlugin.OcclusionStrengthOffset.Value:+0.00;-0.00;0.00}");
+                GUILayout.BeginHorizontal();
+                var newOccStrOffset = GUILayout.HorizontalSlider(SEGIPlugin.OcclusionStrengthOffset.Value, -0.35f, 0.75f);
+                if (GUILayout.Button("Reset", GUILayout.Width(50)))
+                    newOccStrOffset = 0f;
+                GUILayout.EndHorizontal();
+                if (!Mathf.Approximately(newOccStrOffset, SEGIPlugin.OcclusionStrengthOffset.Value))
+                    SEGIPlugin.OcclusionStrengthOffset.Value = newOccStrOffset;
+                GUILayout.TextArea("How strongly geometry stops GI. Higher reduces light leaking through walls but also darkens scene.", GUI.skin.box);
+                GUILayout.Space(5);
+                GUILayout.Label($"Cone Trace Bias: {SEGIPlugin.ConeTraceBiasOffset.Value:+0.00;-0.00;0.00}");
+                GUILayout.BeginHorizontal();
+                var newBiasOffset = GUILayout.HorizontalSlider(SEGIPlugin.ConeTraceBiasOffset.Value, -0.3f, 0.6f);
+                if (GUILayout.Button("Reset", GUILayout.Width(50)))
+                    newBiasOffset = 0f;
+                GUILayout.EndHorizontal();
+                if (!Mathf.Approximately(newBiasOffset, SEGIPlugin.ConeTraceBiasOffset.Value))
+                    SEGIPlugin.ConeTraceBiasOffset.Value = newBiasOffset;
+                GUILayout.TextArea("How far from surfaces GI probes sample, Lower = more self-occlusion. Higher = more light leakage.", GUI.skin.box);
+            }
             GUILayout.EndVertical();
 
             #if SEGI_PROFILER
@@ -518,6 +549,7 @@ public class ConfigMenu : MonoBehaviour
         _blueBoxStyle = MakeStyle(new Color(0f, 0.18f, 0.6f, 0.8f), Color.white);
         _redBoxStyle = MakeStyle(new Color(0.55f, 0.01f, 0f, 0.8f), Color.white);
         _greenBoxStyle = MakeStyle(new Color(0f, 0.5f, 0.05f, 0.8f), Color.white);
+        _purpleBoxStyle = MakeStyle(new Color(0.35f, 0.1f, 0.45f, 0.8f), Color.white);
 
         _stylesInitialized = true;
     }

@@ -2,7 +2,7 @@
 <ModMetadata xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
     <Name>Beef's SEGI Plus</Name>
     <Author>TheRealBeef</Author>
-    <Version>1.4.3</Version>
+    <Version>1.4.4</Version>
 
     <Description>
         [h1]Beef's SEGI Plus[/h1]
@@ -35,6 +35,11 @@
     </Description>
 
     <ChangeLog>
+        1.4.4
+        - Build for new game update
+        - Fix thumbnail
+        - Add "Advanced" section with occlusion settings
+
         1.4.3:
         - Potential fix for Vulkan (Linux performance improvements woooo)
 

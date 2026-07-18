@@ -44,6 +44,11 @@ Built upon the work of:
 - **Vinus** (previous implementation): [https://github.com/TerameTechYT/StationeersSharp/tree/development/Source/SEGIMod](https://github.com/TerameTechYT/StationeersSharp/tree/development/Source/SEGIMod)
 
 ## Changelog
+>### Version 1.4.4
+>- Build for new game update
+>- Fix thumbnail
+>- Add "Advanced" section with occlusion settings
+
 >### Version 1.4.3:
 >- Potential fix for Vulkan (Linux performance improvements woooo)
 

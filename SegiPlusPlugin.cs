@@ -52,6 +52,8 @@ namespace BeefsSEGIPlus
         public static ConfigEntry<bool> EmissiveBubbleEnabled;
         public static ConfigEntry<bool> DenseVoxelMode;
         public static ConfigEntry<bool> ForwardOriginBias;
+        public static ConfigEntry<float> OcclusionStrengthOffset;
+        public static ConfigEntry<float> ConeTraceBiasOffset;
 
         private static SEGIStationeers SegiStationeersInstance { get; set; }
 
@@ -210,6 +212,12 @@ namespace BeefsSEGIPlus
             TargetFramerate = Config.Bind("Performance", "Target Framerate", 60,
                 new ConfigDescription("The system will try to adjust SEGI Plus to stay around this framerate",
                     new AcceptableValueRange<int>(15, 240)));
+            OcclusionStrengthOffset = Config.Bind("Advanced", "Occlusion Strength Offset", 0f,
+                new ConfigDescription("Offset for how strongly geometry stops GI. Higher reduces light leaking through walls but also darkens scene. 0 = default.",
+                    new AcceptableValueRange<float>(-0.35f, 0.75f)));
+            ConeTraceBiasOffset = Config.Bind("Advanced", "Cone Trace Bias Offset", 0f,
+                new ConfigDescription("Offset forwHow far from surfaces GI probes sample, Lower = more self-occlusion. Higher = more light leakage. 0 = default.",
+                    new AcceptableValueRange<float>(-0.3f, 0.6f)));
         }
 
         private IEnumerator InitializeSEGICoroutine()
@@ -422,7 +430,7 @@ namespace BeefsSEGIPlus
         public static float ConeLength => ConeLengths[CurrentQualityLevel] * (DenseVoxelMode ? 1.5f : 1.0f);
         public static float ConeWidth => ConeWidths[CurrentQualityLevel];
         public static int SunShadowResolution => SunShadowResolutions[CurrentQualityLevel];
-        public static float ConeTraceBias => DenseVoxelMode ? 0.325f : 0.65f;
+        public static float ConeTraceBias => Mathf.Max(0.05f, (DenseVoxelMode ? 0.325f : 0.65f) + (SEGIPlugin.ConeTraceBiasOffset?.Value ?? 0f));
         public static float TemporalBlendWeight => 0.01f;
         public static float GIGain
         {
@@ -453,7 +461,7 @@ namespace BeefsSEGIPlus
                 return SEGIPlugin.SecondaryBounceGain?.Value ?? 0.4f;
             }
         }
-        public static float OcclusionStrength => 0.86f;
+        public static float OcclusionStrength => Mathf.Clamp(0.86f + (SEGIPlugin.OcclusionStrengthOffset?.Value ?? 0f), 0.5f, 1.6f);
         private static readonly float[] NearOcclusionStrengths = { 0.42f, 0.42f, 0.86f, 0.86f, 0.86f };
         public static float NearOcclusionStrength => NearOcclusionStrengths[CurrentQualityLevel];
         public static float OcclusionPower => 1.0f;

@@ -645,7 +645,7 @@ public class SEGIStationeers : MonoBehaviour
 
             { var v = ConfigData.InnerOcclusionLayers;
             if (v != _cachedInnerOcclusionLayers)
-            { Shader.SetGlobalInt("SEGIData.InnerOcclusionLayers", v); _cachedInnerOcclusionLayers = v; } }
+            { Shader.SetGlobalInt("SEGIInnerOcclusionLayers", v); _cachedInnerOcclusionLayers = v; } }
 
             shadowCamera.cullingMask = giCullingMask;
             shadowCamera.renderingPath = RenderingPath.Forward;
