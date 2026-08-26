@@ -2,7 +2,7 @@
 <ModMetadata xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
     <Name>Beef's SEGI Plus</Name>
     <Author>TheRealBeef</Author>
-    <Version>1.4.4</Version>
+    <Version>1.4.5</Version>
 
     <Description>
         [h1]Beef's SEGI Plus[/h1]
@@ -35,6 +35,9 @@
     </Description>
 
     <ChangeLog>
+        1.4.5
+        - Build for Power Line Update
+
         1.4.4
         - Build for new game update
         - Fix thumbnail

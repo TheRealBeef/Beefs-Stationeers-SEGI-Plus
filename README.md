@@ -44,6 +44,9 @@ Built upon the work of:
 - **Vinus** (previous implementation): [https://github.com/TerameTechYT/StationeersSharp/tree/development/Source/SEGIMod](https://github.com/TerameTechYT/StationeersSharp/tree/development/Source/SEGIMod)
 
 ## Changelog
+>### Version 1.4.5
+> - Build for Power Line Update
+
 >### Version 1.4.4
 >- Build for new game update
 >- Fix thumbnail
